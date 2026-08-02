@@ -18,6 +18,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import cn.yzjtiantian.android.core.AccountManager
+import cn.yzjtiantian.android.core.EventBridge
 import cn.yzjtiantian.android.core.PeytBridge
 import cn.yzjtiantian.android.core.Rpc
 import cn.yzjtiantian.android.ui.theme.PeytchatTheme
@@ -55,8 +57,26 @@ fun BridgeStatus(bridge: PeytBridge) {
                 val rpc = Rpc(bridge)
                 val info = rpc.call("get_system_info")
                 val coreVersion = info.optString("deltachat_core_version", "?")
-                "init=$init plugins=$pluginsInit\ncore: $coreVersion"
+
+                val accounts = AccountManager(rpc)
+                val before = accounts.getAllAccounts().size
+
+                val events = EventBridge(rpc)
+                var eventCount = 0
+                events.addListener { eventCount++ }
+                events.start()
+
+                val newId = accounts.addAccount()
+                val after = accounts.getAllAccounts().size
+                accounts.removeAccount(newId)
+                events.stop()
+
+                "init=$init plugins=$pluginsInit\n" +
+                    "core: $coreVersion\n" +
+                    "accounts: $before -> $after (test id=$newId)\n" +
+                    "events fired: $eventCount"
             } catch (e: Throwable) {
+                android.util.Log.e("PeytTest", "smoke test failed", e)
                 "bridge error: ${e}"
             }
         }
