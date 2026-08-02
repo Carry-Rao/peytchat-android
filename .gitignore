@@ -23,5 +23,8 @@ captures/
 # Rust
 rust/target/
 
+# JNI native library (built from rust/ via scripts/build-android.sh)
+app/src/main/jniLibs/
+
 # Local reference to desktop source repo
 rv

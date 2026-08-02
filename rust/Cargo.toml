@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["peytchat-bridge", "peytchat-plugins"]
+
+[profile.release]
+lto = true
+opt-level = "s"
