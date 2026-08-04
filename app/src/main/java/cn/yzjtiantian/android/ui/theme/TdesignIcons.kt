@@ -112,6 +112,16 @@ object TdesignIcons {
         strokePath("M17.5 9.5L12 15L6.5 9.5")
     }
 
+    val Theme: ImageVector = icon("theme") {
+        strokePath("M12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2Z")
+        strokePath("M8 8L10 10M16 8L14 10M12 16L14 18M12 16L10 18M8 16L10 14M16 16L14 14")
+        strokePath("M6 12L8 12M18 12L16 12M12 6L12 8M12 18L12 16")
+    }
+
+    val ChevronRight: ImageVector = icon("chevron-right") {
+        strokePath("M9 18L15 12L9 6")
+    }
+
     val ChevronLeft: ImageVector = icon("chevron-left") {
         strokePath("M14.5 17.5L9 12L14.5 6.5")
     }
