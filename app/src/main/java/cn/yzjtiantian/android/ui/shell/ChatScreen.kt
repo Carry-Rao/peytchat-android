@@ -48,6 +48,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+
 private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
 /** Message list + composer for a channel. */
