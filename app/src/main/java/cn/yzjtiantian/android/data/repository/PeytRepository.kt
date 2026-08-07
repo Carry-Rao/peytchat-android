@@ -1,5 +1,7 @@
 package cn.yzjtiantian.android.data.repository
 
+import cn.yzjtiantian.android.core.DeepLink
+import cn.yzjtiantian.android.core.PeytBridge
 import cn.yzjtiantian.android.core.Rpc
 import cn.yzjtiantian.android.core.RpcException
 import cn.yzjtiantian.android.core.Session
@@ -7,6 +9,7 @@ import cn.yzjtiantian.android.data.AppDatabase
 import cn.yzjtiantian.android.data.dao.ContactRoleRow
 import cn.yzjtiantian.android.data.dto.CardDto
 import cn.yzjtiantian.android.data.dto.ChannelDto
+import cn.yzjtiantian.android.data.dto.ContactDto
 import cn.yzjtiantian.android.data.dto.ContactRoleDto
 import cn.yzjtiantian.android.data.dto.CoreMessageDto
 import cn.yzjtiantian.android.data.dto.InboxEventDto
@@ -23,6 +26,7 @@ import cn.yzjtiantian.android.data.entity.RoleEntity
 import cn.yzjtiantian.android.data.entity.WorkspaceEntity
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Base64
 
 private const val PEYT_STUDIO_NAME = "PEYT Studio"
 private const val SELF_CONTACT_ID = 1L
@@ -65,8 +69,41 @@ class PeytRepository(
         return result.toLong()
     }
 
-    /** Public text-send used by the chat UI. */
-    suspend fun sendMessage(chatId: Long, text: String): Long = sendText(chatId, text)
+    /**
+     * Public text-send used by the chat UI.
+     *
+     * 按 PEYT 信封协议包装正文:发送端(写)复用 Rust `peyt-envelope` 的
+     * `build_envelope`(与桌面端 envelope.rs 同构),产出
+     * `{"type":"text","id":"<uuid>","payload":{"text":"..."}}`。
+     * 内部 `[CARD]`/`[PEYT_INVITE]` 仍走 [sendText] 前缀协议。
+     * 接收端(读)解析见 [resolveEnvelopeText],为客户端自实现。
+     */
+    suspend fun sendMessage(chatId: Long, text: String): Long {
+        val payload = JSONObject().put("text", text).toString()
+        val envelope = PeytBridge.nativeBuildEnvelope("text", payload)
+        return sendText(chatId, envelope)
+    }
+
+    /**
+     * 解析 PEYT 信封(镜像桌面端 `tryParseEnvelope` + `envelopeText`):
+     * 若正文是 `{"type":"text","id":...,"payload":{"text":...}}`,返回 `payload.text`;
+     * 否则原样返回。内部 `[CARD]`/`[PEYT_INVITE]` 消息不含信封,走原样分支。
+     */
+    private fun resolveEnvelopeText(raw: String): String {
+        if (raw.isEmpty() || raw[0] != '{') return raw
+        return try {
+            val obj = JSONObject(raw)
+            val payload = obj.optJSONObject("payload")
+            val text = payload?.optString("text")
+            if (!obj.isNull("type") && !obj.isNull("id") && payload != null && text != null) {
+                text
+            } else {
+                raw
+            }
+        } catch (_: Exception) {
+            raw
+        }
+    }
 
     /**
      * Message IDs for a chat, oldest-first. Mirrors desktop `get_chat_msgs`
@@ -103,7 +140,7 @@ class PeytRepository(
                     msgId = m.id,
                     fromId = m.fromId,
                     fromName = if (m.fromId == SELF_CONTACT_ID) "我" else contactDisplayName(m.fromId),
-                    text = m.text,
+                    text = resolveEnvelopeText(m.text),
                     timestamp = m.timestamp,
                     isOut = m.fromId == SELF_CONTACT_ID,
                     isInfo = isInfo,
@@ -138,10 +175,28 @@ class PeytRepository(
             ) as? String ?: "我"
         }
         return try {
-            getContact(contactId).optString("displayName").ifBlank { "我" }
+            val c = getContact(contactId)
+            c.optString("displayName").ifBlank { c.optString("address") }
         } catch (_: Exception) {
-            "我"
+            "陌生人"
         }
+    }
+
+    /**
+     * 直接消息的会话名:优先联系人显示名(core get_display_name:
+     * 本地名→authname→邮箱),与桌面端对齐;拿不到再用 chatlist 的 name。
+     */
+    private fun resolveDmName(item: JSONObject): String {
+        val dmContactId = item.optLong("dmChatContact", 0)
+        if (dmContactId > 0) {
+            runCatching {
+                val c = getContact(dmContactId)
+                val display = c.optString("displayName")
+                if (display.isNotBlank()) return display
+                c.optString("address").takeIf { it.isNotBlank() }?.let { return it }
+            }
+        }
+        return item.optString("name")
     }
 
     private fun lookupContactIdByAddr(addr: String): Long? {
@@ -156,11 +211,17 @@ class PeytRepository(
     private fun getSecureJoinQr(chatId: Long?): String {
         val arr = JSONArray().put(accountId())
         if (chatId != null) arr.put(chatId) else arr.put(JSONObject.NULL)
-        return rpc.callRaw("get_chat_securejoin_qr_code", arr) as? String ?: ""
+        val qr = rpc.callRaw("get_chat_securejoin_qr_code", arr) as? String ?: ""
+        return qr.replaceFirst("https://i.delta.chat/", "https://peyt.yzjtiantian.cn/")
     }
 
     private fun secureJoin(qr: String): Long {
-        val result = rpc.callRaw("secure_join", JSONArray().put(accountId()).put(qr)) as? Number
+        val normalized = qr.replaceFirst(
+            "https://peyt.yzjtiantian.cn/",
+            "https://i.delta.chat/",
+        )
+        android.util.Log.d("PEYT", "[secure_join] in=$qr -> out=$normalized")
+        val result = rpc.callRaw("secure_join", JSONArray().put(accountId()).put(normalized)) as? Number
             ?: throw RpcException("secure_join returned no id")
         return result.toLong()
     }
@@ -514,6 +575,149 @@ class PeytRepository(
         logActivity(workspaceId, chatId, "message_to_card", "card", cardId, null)
         return db.cardDao().getById(cardId)!!.toDto()
     }
+
+    // ── contacts & direct chats ────────────────────────────────────────────
+
+    /** Known contacts (excluding self), mirroring desktop `get_contacts`. */
+    suspend fun listContacts(): List<ContactDto> {
+        val arr = rpc.callArray("get_contacts", JSONArray().put(accountId()).put(0).put(JSONObject.NULL))
+        val out = ArrayList<ContactDto>(arr.length())
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val id = obj.optLong("id")
+            if (id <= 0 || id == SELF_CONTACT_ID) continue
+            out.add(
+                ContactDto(
+                    id = id,
+                    address = obj.optString("address"),
+                    displayName = obj.optString("displayName"),
+                    name = obj.optString("name"),
+                ),
+            )
+        }
+        return out
+    }
+
+    /** Creates (or reuses) a DM chat with a contact by email address. */
+    suspend fun createChatByEmail(address: String): Long {
+        val trimmed = address.trim()
+        if (trimmed.isEmpty()) throw RpcException("empty email address")
+        val contactId = lookupContactIdByAddr(trimmed) ?: run {
+            val cid = rpc.callRaw(
+                "create_contact",
+                JSONArray().put(accountId()).put(trimmed).put(JSONObject.NULL),
+            ) as? Number ?: throw RpcException("create_contact returned no id")
+            cid.toLong()
+        }
+        val chatId = rpc.callRaw(
+            "create_chat_by_contact_id",
+            JSONArray().put(accountId()).put(contactId),
+        ) as? Number ?: throw RpcException("create_chat_by_contact_id returned no id")
+        return chatId.toLong()
+    }
+
+    /** Creates a new (empty) group chat. */
+    suspend fun createGroup(name: String): Long = createGroupChat(name)
+
+    /**
+     * 直接消息列表,来自 core `get_chatlist`。
+     *
+     * 桌面端消息页直接渲染 core chatlist;Android 此前只展示本地 workspace
+     * 频道,收到陌生人的单聊/请求后没有任何入口。这里取未归档、非 self-talk、
+     * 且未绑定为 workspace 频道的会话,让收到的新消息能直接出现在「消息」页。
+     * 排序:未读优先,再按 chat_id 倒序(近似最近活跃)。
+     */
+    suspend fun listDirectChats(): List<ChannelDto> {
+        val wsChannelIds = db.channelDao().getAllChatIds().toHashSet()
+        val entries = runCatching {
+            rpc.callArray(
+                "get_chatlist_entries",
+                JSONArray().put(accountId()).put(0).put(JSONObject.NULL).put(JSONObject.NULL),
+            )
+        }.getOrDefault(JSONArray())
+        val ids = ArrayList<Long>(entries.length())
+        for (i in 0 until entries.length()) {
+            val id = entries.optLong(i, 0)
+            if (id > 9) ids.add(id)
+        }
+        if (ids.isEmpty()) return emptyList()
+        val items = runCatching {
+            rpc.call(
+                "get_chatlist_items_by_entries",
+                JSONArray().put(accountId()).put(JSONArray(ids)),
+            )
+        }.getOrNull() ?: return emptyList()
+
+        val out = ArrayList<ChannelDto>()
+        val keys = items.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val obj = items.optJSONObject(key) ?: continue
+            if (obj.optString("kind") != "ChatListItem") continue
+            val chatId = obj.optLong("id", 0)
+            if (chatId in wsChannelIds) continue
+            if (obj.optBoolean("is_self_talk", false)) continue
+            if (obj.optBoolean("is_archived", false)) continue
+            val preview = obj.optString("summary_text2")
+            out.add(
+                ChannelDto(
+                    id = -1,
+                    workspaceId = -1,
+                    chatId = chatId,
+                    name = resolveDmName(obj),
+                    category = "",
+                    position = 0,
+                    topic = preview.ifBlank { null },
+                    unread = obj.optInt("fresh_message_counter", 0),
+                    spaceType = "chat",
+                ),
+            )
+        }
+        out.sortWith(compareByDescending<ChannelDto> { it.unread }.thenByDescending { it.chatId })
+        return out
+    }
+
+    /**
+     * Adds a contact by email, a `peyt://invite/<b64>` legacy link, a
+     * `peytchat://` deep link, or a core securejoin link
+     * (`https://i.delta.chat/#<token>` / `OPENPGP4FPR:<token>`).
+     * Returns the opened chat id.
+     */
+    suspend fun addFriend(input: String): Long {
+        val raw = DeepLink.toCore(input)
+        if (raw.isEmpty()) throw RpcException("empty input")
+        val email = parseInviteEmail(raw) ?: raw
+        if (isEmail(email)) return createChatByEmail(email)
+        return secureJoin(raw)
+    }
+
+    /** Basic display name for a chat id (used when jumping via deep link). */
+    suspend fun getChatName(chatId: Long): String =
+        runCatching {
+            rpc.call(
+                "get_basic_chat_info",
+                JSONArray().put(accountId()).put(chatId),
+            ).optString("name")
+        }.getOrDefault("")
+
+    /** Invite link for the current workspace, a core securejoin QR/URL. */
+    suspend fun getInviteLink(): String {
+        val wsId = currentWorkspaceId()
+        val ws = db.workspaceDao().listWorkspaces().firstOrNull { it.id == wsId }
+            ?: throw RpcException("no workspace")
+        return getSecureJoinQr(ws.masterChatId)
+    }
+
+    private fun parseInviteEmail(raw: String): String? {
+        val prefix = "peyt://invite/"
+        if (!raw.startsWith(prefix)) return null
+        return runCatching {
+            String(Base64.getUrlDecoder().decode(raw.substring(prefix.length)))
+        }.getOrNull()?.takeIf { isEmail(it) }
+    }
+
+    private fun isEmail(s: String): Boolean =
+        "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$".toRegex().matches(s.trim())
 
     // ── PEYT Studio ────────────────────────────────────────────────────────
 

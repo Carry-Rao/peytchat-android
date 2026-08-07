@@ -74,6 +74,7 @@ class EventBridge(private val rpc: Rpc) {
                 if (kind.isEmpty()) continue
                 val contextId = item.optLong("contextId", -1)
                 val dcEvent = DcEvent(kind = kind, contextId = contextId, payload = event)
+                android.util.Log.d("PEYT", "[event] ctx=$contextId kind=$kind payload=${event}")
                 for (l in listeners) {
                     try {
                         l.onEvent(dcEvent)

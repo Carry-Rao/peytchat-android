@@ -1,5 +1,6 @@
 package cn.yzjtiantian.android
 
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -38,9 +39,13 @@ import kotlinx.coroutines.Dispatchers
 
 class MainActivity : ComponentActivity() {
 
+    /** 最近收到的深链(`peytchat://...`)，登录后由 ShellScreen 消费。 */
+    private var deepLink by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        deepLink = intent.dataString
         setContent {
             val themeMode by ThemeManager.themeMode.collectAsState()
             val navController = rememberNavController()
@@ -54,17 +59,29 @@ class MainActivity : ComponentActivity() {
                 ) {
                     AppRoot(
                         bridge = PeytBridge,
-                        navController = navController
+                        navController = navController,
+                        deepLink = deepLink,
+                        onDeepLinkConsumed = { deepLink = null },
                     )
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        deepLink = intent.dataString
+    }
 }
 
 @Composable
-fun AppRoot(bridge: PeytBridge,
-            navController: NavController) {
+fun AppRoot(
+    bridge: PeytBridge,
+    navController: NavController,
+    deepLink: String?,
+    onDeepLinkConsumed: () -> Unit,
+) {
     val context = LocalContext.current
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
     val accountManager = remember(bridge) { AccountManager(Rpc(bridge)) }
@@ -116,8 +133,13 @@ fun AppRoot(bridge: PeytBridge,
                             Session.select(id)
                             Session.displayName =
                                 accountManager.getConfig(id, "displayname") ?: ""
+                            accountManager.disableForceEncryption(id)
+                            accountManager.startIo(id)
+                            android.util.Log.d("PEYT", "[startup] account=$id started IO, force_encryption disabled")
                             val bridgeEvents = EventBridge(rpc)
                             bridgeEvents.start()
+                        } else {
+                            android.util.Log.w("PEYT", "[startup] no configured account found")
                         }
                     }
                 }
@@ -129,7 +151,9 @@ fun AppRoot(bridge: PeytBridge,
                 accountManager = accountManager,  // ✅ 新增参数
                 onLoggedOut = {
                     loggedIn = false
-                }
+                },
+                deepLink = deepLink,
+                onDeepLinkConsumed = onDeepLinkConsumed,
             )
         }
     }
