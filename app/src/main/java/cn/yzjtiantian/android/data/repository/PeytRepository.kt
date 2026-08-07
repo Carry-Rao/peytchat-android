@@ -67,8 +67,42 @@ class PeytRepository(
         return result.toLong()
     }
 
-    /** Public text-send used by the chat UI. */
-    suspend fun sendMessage(chatId: Long, text: String): Long = sendText(chatId, text)
+    /**
+     * Public text-send used by the chat UI.
+     *
+     * 按 PEYT 信封协议(与桌面端 `build_envelope` 一致)包装正文:
+     * `{"type":"text","id":"<uuid>","payload":{"text":"..."}}`,
+     * 让对端(桌面端)能通过 `payload.text` 还原正文而非显示原始 JSON。
+     * 仅用于用户聊天消息;内部 `[CARD]`/`[PEYT_INVITE]` 仍走 [sendText] 前缀协议。
+     */
+    suspend fun sendMessage(chatId: Long, text: String): Long {
+        val envelope = JSONObject()
+            .put("type", "text")
+            .put("id", java.util.UUID.randomUUID().toString())
+            .put("payload", JSONObject().put("text", text))
+        return sendText(chatId, envelope.toString())
+    }
+
+    /**
+     * 解析 PEYT 信封(镜像桌面端 `tryParseEnvelope` + `envelopeText`):
+     * 若正文是 `{"type":"text","id":...,"payload":{"text":...}}`,返回 `payload.text`;
+     * 否则原样返回。内部 `[CARD]`/`[PEYT_INVITE]` 消息不含信封,走原样分支。
+     */
+    private fun resolveEnvelopeText(raw: String): String {
+        if (raw.isEmpty() || raw[0] != '{') return raw
+        return try {
+            val obj = JSONObject(raw)
+            val payload = obj.optJSONObject("payload")
+            val text = payload?.optString("text")
+            if (!obj.isNull("type") && !obj.isNull("id") && payload != null && text != null) {
+                text
+            } else {
+                raw
+            }
+        } catch (_: Exception) {
+            raw
+        }
+    }
 
     /**
      * Message IDs for a chat, oldest-first. Mirrors desktop `get_chat_msgs`
@@ -105,7 +139,7 @@ class PeytRepository(
                     msgId = m.id,
                     fromId = m.fromId,
                     fromName = if (m.fromId == SELF_CONTACT_ID) "我" else contactDisplayName(m.fromId),
-                    text = m.text,
+                    text = resolveEnvelopeText(m.text),
                     timestamp = m.timestamp,
                     isOut = m.fromId == SELF_CONTACT_ID,
                     isInfo = isInfo,
