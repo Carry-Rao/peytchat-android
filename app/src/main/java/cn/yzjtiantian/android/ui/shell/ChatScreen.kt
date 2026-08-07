@@ -90,7 +90,7 @@ fun ChatScreen(
                 .fillMaxWidth(),
             reverseLayout = true,
         ) {
-            items(messages, key = { it.msgId }) { msg ->
+            items(messages.asReversed(), key = { it.msgId }) { msg ->
                 if (msg.isInfo) {
                     InfoLine(text = msg.text)
                 } else {
