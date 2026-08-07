@@ -86,6 +86,8 @@ private data class DirectChat(val chatId: Long, val name: String)
 fun ShellScreen(
     repository: PeytRepository,
     onLoggedOut: () -> Unit,
+    deepLink: String?,
+    onDeepLinkConsumed: () -> Unit,
 ) {
     var workspaces by remember { mutableStateOf<List<WorkspaceDto>>(emptyList()) }
     var currentWorkspace by remember { mutableStateOf<WorkspaceDto?>(null) }
@@ -126,6 +128,32 @@ fun ShellScreen(
     fun openDirectChatById(chatId: Long, name: String) {
         addAction = null
         openDirectChat = DirectChat(chatId, name)
+    }
+
+    /** 处理深链(`peytchat://` 等)：建单聊/securejoin 后直接跳到会话。 */
+    fun openDeepLink(raw: String) {
+        scope.launch {
+            val chatId = withContext(Dispatchers.IO) {
+                runCatching { repository.addFriend(raw) }
+                    .onFailure { error = it.message }
+                    .getOrNull()
+            }
+            if (chatId != null) {
+                val name = withContext(Dispatchers.IO) {
+                    repository.getChatName(chatId).ifBlank { "新会话" }
+                }
+                openDirectChatById(chatId, name)
+            }
+        }
+    }
+
+    // 深链:登录后自动处理一次,处理完回调消费掉。
+    LaunchedEffect(deepLink) {
+        val link = deepLink?.takeIf { it.isNotBlank() }
+        if (link != null) {
+            openDeepLink(link)
+            onDeepLinkConsumed()
+        }
     }
 
     fun addByEmail(address: String) {

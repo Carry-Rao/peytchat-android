@@ -1,5 +1,6 @@
 package cn.yzjtiantian.android.data.repository
 
+import cn.yzjtiantian.android.core.DeepLink
 import cn.yzjtiantian.android.core.Rpc
 import cn.yzjtiantian.android.core.RpcException
 import cn.yzjtiantian.android.core.Session
@@ -659,17 +660,27 @@ class PeytRepository(
     }
 
     /**
-     * Adds a contact by email, a `peyt://invite/<b64>` legacy link, or a
-     * core securejoin link (`https://i.delta.chat/#<token>` /
-     * `OPENPGP4FPR:<token>`). Returns the opened chat id.
+     * Adds a contact by email, a `peyt://invite/<b64>` legacy link, a
+     * `peytchat://` deep link, or a core securejoin link
+     * (`https://i.delta.chat/#<token>` / `OPENPGP4FPR:<token>`).
+     * Returns the opened chat id.
      */
     suspend fun addFriend(input: String): Long {
-        val raw = input.trim()
+        val raw = DeepLink.toCore(input)
         if (raw.isEmpty()) throw RpcException("empty input")
         val email = parseInviteEmail(raw) ?: raw
         if (isEmail(email)) return createChatByEmail(email)
         return secureJoin(raw)
     }
+
+    /** Basic display name for a chat id (used when jumping via deep link). */
+    suspend fun getChatName(chatId: Long): String =
+        runCatching {
+            rpc.call(
+                "get_basic_chat_info",
+                JSONArray().put(accountId()).put(chatId),
+            ).optString("name")
+        }.getOrDefault("")
 
     /** Invite link for the current workspace, a core securejoin QR/URL. */
     suspend fun getInviteLink(): String {
