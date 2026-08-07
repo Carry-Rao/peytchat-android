@@ -112,7 +112,7 @@ fun ChatScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
+                    .padding(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedTextField(
@@ -120,7 +120,8 @@ fun ChatScreen(
                     onValueChange = { draft = it },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("发消息到 ${channel.name}") },
-                    maxLines = 4,
+                    maxLines = 2,
+                    minLines = 1,
                 )
                 Spacer(Modifier.width(8.dp))
                 IconButton(
