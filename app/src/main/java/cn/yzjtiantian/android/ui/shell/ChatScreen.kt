@@ -1,11 +1,13 @@
 package cn.yzjtiantian.android.ui.shell
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -192,21 +194,28 @@ private fun MessageBubble(msg: ChatMessageDto) {
             modifier = Modifier.widthIn(max = 300.dp),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                Text(
-                    text = msg.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = textColor,
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = formatTime(msg.timestamp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isOut) Color.White.copy(alpha = 0.7f)
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column {
+                    Text(
+                        text = msg.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = textColor,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (isOut) Arrangement.End else Arrangement.Start,
+                    ) {
+                        Text(
+                            text = formatTime(msg.timestamp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isOut) Color.White.copy(alpha = 0.7f)
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
     }
