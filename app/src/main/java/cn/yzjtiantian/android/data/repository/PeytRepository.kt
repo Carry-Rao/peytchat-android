@@ -601,6 +601,64 @@ class PeytRepository(
     suspend fun createGroup(name: String): Long = createGroupChat(name)
 
     /**
+     * 直接消息列表,来自 core `get_chatlist`。
+     *
+     * 桌面端消息页直接渲染 core chatlist;Android 此前只展示本地 workspace
+     * 频道,收到陌生人的单聊/请求后没有任何入口。这里取未归档、非 self-talk、
+     * 且未绑定为 workspace 频道的会话,让收到的新消息能直接出现在「消息」页。
+     * 排序:未读优先,再按 chat_id 倒序(近似最近活跃)。
+     */
+    suspend fun listDirectChats(): List<ChannelDto> {
+        val wsChannelIds = db.channelDao().getAllChatIds().toHashSet()
+        val entries = runCatching {
+            rpc.callArray(
+                "get_chatlist_entries",
+                JSONArray().put(accountId()).put(0).put(JSONObject.NULL).put(JSONObject.NULL),
+            )
+        }.getOrDefault(JSONArray())
+        val ids = ArrayList<Long>(entries.length())
+        for (i in 0 until entries.length()) {
+            val id = entries.optLong(i, 0)
+            if (id > 9) ids.add(id)
+        }
+        if (ids.isEmpty()) return emptyList()
+        val items = runCatching {
+            rpc.call(
+                "get_chatlist_items_by_entries",
+                JSONArray().put(accountId()).put(JSONArray(ids)),
+            )
+        }.getOrNull() ?: return emptyList()
+
+        val out = ArrayList<ChannelDto>()
+        val keys = items.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val obj = items.optJSONObject(key) ?: continue
+            if (obj.optString("kind") != "ChatListItem") continue
+            val chatId = obj.optLong("id", 0)
+            if (chatId in wsChannelIds) continue
+            if (obj.optBoolean("is_self_talk", false)) continue
+            if (obj.optBoolean("is_archived", false)) continue
+            val preview = obj.optString("summary_text2")
+            out.add(
+                ChannelDto(
+                    id = -1,
+                    workspaceId = -1,
+                    chatId = chatId,
+                    name = obj.optString("name"),
+                    category = "",
+                    position = 0,
+                    topic = preview.ifBlank { null },
+                    unread = obj.optInt("fresh_message_counter", 0),
+                    spaceType = "chat",
+                ),
+            )
+        }
+        out.sortWith(compareByDescending<ChannelDto> { it.unread }.thenByDescending { it.chatId })
+        return out
+    }
+
+    /**
      * Adds a contact by email, a `peyt://invite/<b64>` legacy link, or a
      * core securejoin link (`https://i.delta.chat/#<token>` /
      * `OPENPGP4FPR:<token>`). Returns the opened chat id.

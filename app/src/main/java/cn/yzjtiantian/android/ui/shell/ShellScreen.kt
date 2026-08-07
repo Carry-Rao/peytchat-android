@@ -52,6 +52,7 @@ import cn.yzjtiantian.android.ui.theme.TdesignIcons
 import cn.yzjtiantian.android.ui.theme.ThemeManager
 import cn.yzjtiantian.android.ui.theme.ThemeSelectionDialog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.material3.DropdownMenu
@@ -89,6 +90,7 @@ fun ShellScreen(
     var workspaces by remember { mutableStateOf<List<WorkspaceDto>>(emptyList()) }
     var currentWorkspace by remember { mutableStateOf<WorkspaceDto?>(null) }
     var channels by remember { mutableStateOf<List<ChannelDto>>(emptyList()) }
+    var dmChats by remember { mutableStateOf<List<ChannelDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var currentTab by remember { mutableStateOf(Tab.Messages) }
     var openChannel by remember { mutableStateOf<ChannelDto?>(null) }
@@ -103,6 +105,20 @@ fun ShellScreen(
         scope.launch(Dispatchers.IO) {
             runCatching { repository.listChannels(ws.id) }
                 .onSuccess { channels = it }
+                .onFailure { error = it.message }
+        }
+    }
+
+    /** 刷新 workspace 频道 + 直接消息(轮询用,不重置 currentWorkspace)。 */
+    fun refreshMessages() {
+        scope.launch(Dispatchers.IO) {
+            currentWorkspace?.let { ws ->
+                runCatching { repository.listChannels(ws.id) }
+                    .onSuccess { channels = it }
+                    .onFailure { error = it.message }
+            }
+            runCatching { repository.listDirectChats() }
+                .onSuccess { dmChats = it }
                 .onFailure { error = it.message }
         }
     }
@@ -153,6 +169,11 @@ fun ShellScreen(
                 workspaces = ws
                 ws.firstOrNull()?.let { refreshChannels(it) }
             }.onFailure { error = it.message }
+        }
+        // 轮询刷新:收到新消息(陌生人单聊/请求)时直接消息区能及时出现。
+        while (true) {
+            delay(3000)
+            refreshMessages()
         }
     }
 
@@ -288,13 +309,13 @@ fun ShellScreen(
                                 )
                             }
                         }
-                        IconButton(onClick = { onLoggedOut() }) {
-                            Icon(
-                                TdesignIcons.LogOut,
-                                contentDescription = "退出登录",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        //IconButton(onClick = { onLoggedOut() }) {
+                        //    Icon(
+                        //        TdesignIcons.LogOut,
+                        //        contentDescription = "退出登录",
+                        //        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        //    )
+                        //}
                     }
                 }
             }
@@ -323,9 +344,11 @@ fun ShellScreen(
                     }
                     else -> {
                         when (currentTab) {
-                            Tab.Messages -> ChannelList(
+                            Tab.Messages -> MessagesList(
+                                dmChats = dmChats,
                                 channels = channels.filter { it.spaceType != "card" },
-                                onSelect = { openChannel = it },
+                                onOpenDm = { openChannel = it },
+                                onOpenChannel = { openChannel = it },
                             )
                             Tab.Work -> ChannelList(
                                 channels = channels.filter { it.spaceType == "card" },
@@ -491,6 +514,69 @@ private fun ChannelScreen(
     }
 }
 
+/** 消息页:顶部「直接消息」区 + workspace 频道。 */
+@Composable
+private fun MessagesList(
+    dmChats: List<ChannelDto>,
+    channels: List<ChannelDto>,
+    onOpenDm: (ChannelDto) -> Unit,
+    onOpenChannel: (ChannelDto) -> Unit,
+) {
+    if (dmChats.isEmpty() && channels.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "暂无会话",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        if (dmChats.isNotEmpty()) {
+            item(key = "dm-header") { SectionHeader(text = "直接消息") }
+            itemsIndexed(dmChats) { index, ch ->
+                ChannelRow(ch = ch, onClick = { onOpenDm(ch) })
+                if (index < dmChats.lastIndex) {
+                    DividerRow()
+                }
+            }
+        }
+        if (channels.isNotEmpty()) {
+            item(key = "channel-header") { SectionHeader(text = "频道") }
+            itemsIndexed(channels) { index, ch ->
+                ChannelRow(ch = ch, onClick = { onOpenChannel(ch) })
+                if (index < channels.lastIndex) {
+                    DividerRow()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+    )
+}
+
+@Composable
+private fun DividerRow() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 76.dp),
+        color = MaterialTheme.colorScheme.outlineVariant,
+    )
+}
+
 /** Channel list: iMessage-style rows with avatar, name, preview and time. */
 @Composable
 private fun ChannelList(
@@ -515,64 +601,69 @@ private fun ChannelList(
     }
     LazyColumn(modifier = modifier.fillMaxSize()) {
         itemsIndexed(channels) { index, ch ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect(ch) }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center,
-                ) {
+            ChannelRow(ch = ch, onClick = { onSelect(ch) })
+            if (index < channels.lastIndex) {
+                DividerRow()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChannelRow(
+    ch: ChannelDto,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = ch.name.firstOrNull()?.uppercase() ?: "#",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp),
+        ) {
+            Text(
+                text = ch.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (ch.unread > 0) {
+                Text(
+                    text = "${ch.unread} 条未读",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                )
+            } else {
+                ch.topic?.takeIf { it.isNotBlank() }?.let {
                     Text(
-                        text = ch.name.firstOrNull()?.uppercase() ?: "#",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 12.dp),
-                ) {
-                    Text(
-                        text = ch.name,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (ch.unread > 0) {
-                        Text(
-                            text = "${ch.unread} 条未读",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                        )
-                    } else {
-                        ch.topic?.takeIf { it.isNotBlank() }?.let {
-                            Text(
-                                text = it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
                 }
-            }
-            if (index < channels.lastIndex) {
-                HorizontalDivider(
-                    modifier = Modifier.padding(start = 76.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
             }
         }
     }
