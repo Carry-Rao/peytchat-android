@@ -28,7 +28,6 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,18 +54,9 @@ import cn.yzjtiantian.android.ui.theme.ThemeSelectionDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-<<<<<<< HEAD
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.runtime.collectAsState
-import androidx.compose.ui.tooling.preview.Preview
-import cn.yzjtiantian.android.ui.theme.AppThemeMode
 import cn.yzjtiantian.android.ui.theme.AppThemeMode.*
-
-=======
->>>>>>> origin/main
 
 private enum class Tab(val label: String) {
     Messages("消息"),

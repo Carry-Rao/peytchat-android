@@ -28,6 +28,13 @@ data class RoleDto(
     val color: String?,
 )
 
+data class ContactDto(
+    val id: Long,
+    val address: String,
+    val displayName: String,
+    val name: String,
+)
+
 data class ContactRoleDto(
     val contactId: Long,
     val roleId: Long,

@@ -7,6 +7,7 @@ import cn.yzjtiantian.android.data.AppDatabase
 import cn.yzjtiantian.android.data.dao.ContactRoleRow
 import cn.yzjtiantian.android.data.dto.CardDto
 import cn.yzjtiantian.android.data.dto.ChannelDto
+import cn.yzjtiantian.android.data.dto.ContactDto
 import cn.yzjtiantian.android.data.dto.ContactRoleDto
 import cn.yzjtiantian.android.data.dto.CoreMessageDto
 import cn.yzjtiantian.android.data.dto.InboxEventDto
@@ -23,6 +24,7 @@ import cn.yzjtiantian.android.data.entity.RoleEntity
 import cn.yzjtiantian.android.data.entity.WorkspaceEntity
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Base64
 
 private const val PEYT_STUDIO_NAME = "PEYT Studio"
 private const val SELF_CONTACT_ID = 1L
@@ -514,6 +516,81 @@ class PeytRepository(
         logActivity(workspaceId, chatId, "message_to_card", "card", cardId, null)
         return db.cardDao().getById(cardId)!!.toDto()
     }
+
+    // ── contacts & direct chats ────────────────────────────────────────────
+
+    /** Known contacts (excluding self), mirroring desktop `get_contacts`. */
+    suspend fun listContacts(): List<ContactDto> {
+        val arr = rpc.callArray("get_contacts", JSONArray().put(accountId()).put(0).put(JSONObject.NULL))
+        val out = ArrayList<ContactDto>(arr.length())
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val id = obj.optLong("id")
+            if (id <= 0 || id == SELF_CONTACT_ID) continue
+            out.add(
+                ContactDto(
+                    id = id,
+                    address = obj.optString("address"),
+                    displayName = obj.optString("displayName"),
+                    name = obj.optString("name"),
+                ),
+            )
+        }
+        return out
+    }
+
+    /** Creates (or reuses) a DM chat with a contact by email address. */
+    suspend fun createChatByEmail(address: String): Long {
+        val trimmed = address.trim()
+        if (trimmed.isEmpty()) throw RpcException("empty email address")
+        val contactId = lookupContactIdByAddr(trimmed) ?: run {
+            val cid = rpc.callRaw(
+                "create_contact",
+                JSONArray().put(accountId()).put(trimmed).put(JSONObject.NULL),
+            ) as? Number ?: throw RpcException("create_contact returned no id")
+            cid.toLong()
+        }
+        val chatId = rpc.callRaw(
+            "create_chat_by_contact_id",
+            JSONArray().put(accountId()).put(contactId),
+        ) as? Number ?: throw RpcException("create_chat_by_contact_id returned no id")
+        return chatId.toLong()
+    }
+
+    /** Creates a new (empty) group chat. */
+    suspend fun createGroup(name: String): Long = createGroupChat(name)
+
+    /**
+     * Adds a contact by email, a `peyt://invite/<b64>` legacy link, or a
+     * core securejoin link (`https://i.delta.chat/#<token>` /
+     * `OPENPGP4FPR:<token>`). Returns the opened chat id.
+     */
+    suspend fun addFriend(input: String): Long {
+        val raw = input.trim()
+        if (raw.isEmpty()) throw RpcException("empty input")
+        val email = parseInviteEmail(raw) ?: raw
+        if (isEmail(email)) return createChatByEmail(email)
+        return secureJoin(raw)
+    }
+
+    /** Invite link for the current workspace, a core securejoin QR/URL. */
+    suspend fun getInviteLink(): String {
+        val wsId = currentWorkspaceId()
+        val ws = db.workspaceDao().listWorkspaces().firstOrNull { it.id == wsId }
+            ?: throw RpcException("no workspace")
+        return getSecureJoinQr(ws.masterChatId)
+    }
+
+    private fun parseInviteEmail(raw: String): String? {
+        val prefix = "peyt://invite/"
+        if (!raw.startsWith(prefix)) return null
+        return runCatching {
+            String(Base64.getUrlDecoder().decode(raw.substring(prefix.length)))
+        }.getOrNull()?.takeIf { isEmail(it) }
+    }
+
+    private fun isEmail(s: String): Boolean =
+        "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$".toRegex().matches(s.trim())
 
     // ── PEYT Studio ────────────────────────────────────────────────────────
 
