@@ -215,55 +215,6 @@ fun ShellScreen(
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
-                    Box {
-                        IconButton( onClick = { expandMenu = true } ) {
-                           Icon(
-                                imageVector = Icons.Filled.Add,
-                                contentDescription = "新建",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = expandMenu,
-                            onDismissRequest = { expandMenu = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("选择联系人") },
-                                onClick = {
-                                    expandMenu = false
-                                    addAction = AddAction.SelectContact
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("通过邮箱添加") },
-                                onClick = {
-                                    expandMenu = false
-                                    addAction = AddAction.AddByEmail
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("通过链接添加") },
-                                onClick = {
-                                    expandMenu = false
-                                    addAction = AddAction.AddByLink
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("新建群聊") },
-                                onClick = {
-                                    expandMenu = false
-                                    addAction = AddAction.NewGroup
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("分享我的邀请链接") },
-                                onClick = {
-                                    expandMenu = false
-                                    addAction = AddAction.ShareInvite
-                                }
-                            )
-                        }
-                    }
                 }
             } else {
                 Surface(
@@ -287,6 +238,55 @@ fun ShellScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                        Box {
+                            IconButton(onClick = { expandMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = "新建",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = expandMenu,
+                                onDismissRequest = { expandMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("选择联系人") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.SelectContact
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("通过邮箱添加") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.AddByEmail
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("通过链接添加") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.AddByLink
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("新建群聊") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.NewGroup
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("分享我的邀请链接") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.ShareInvite
+                                    }
+                                )
+                            }
                         }
                         IconButton(onClick = { onLoggedOut() }) {
                             Icon(
