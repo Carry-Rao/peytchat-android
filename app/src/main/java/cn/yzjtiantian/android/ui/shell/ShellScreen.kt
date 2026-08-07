@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +16,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,12 +48,14 @@ import androidx.compose.ui.unit.dp
 import cn.yzjtiantian.android.data.dto.ChannelDto
 import cn.yzjtiantian.android.data.dto.WorkspaceDto
 import cn.yzjtiantian.android.data.repository.PeytRepository
+import cn.yzjtiantian.android.ui.theme.AppThemeMode
 import cn.yzjtiantian.android.ui.theme.TdesignIcons
 import cn.yzjtiantian.android.ui.theme.ThemeManager
 import cn.yzjtiantian.android.ui.theme.ThemeSelectionDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+<<<<<<< HEAD
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
@@ -59,6 +65,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import cn.yzjtiantian.android.ui.theme.AppThemeMode
 import cn.yzjtiantian.android.ui.theme.AppThemeMode.*
 
+=======
+>>>>>>> origin/main
 
 private enum class Tab(val label: String) {
     Messages("消息"),
@@ -80,7 +88,7 @@ private enum class AddAction {
 private data class DirectChat(val chatId: Long, val name: String)
 
 /**
- * Post-login shell in QQ style: bottom navigation bar + full-width pages.
+ * Post-login shell with bottom navigation bar + full-width pages.
  * Channels open as full-screen chat screens with a back button.
  */
 @Composable
@@ -97,6 +105,7 @@ fun ShellScreen(
     var openDirectChat by remember { mutableStateOf<DirectChat?>(null) }
     var expandMenu by remember { mutableStateOf(false) }
     var addAction by remember { mutableStateOf<AddAction?>(null) }
+    var showAccountPage by remember { mutableStateOf(false) }  // 控制账号页面显示
     val scope = rememberCoroutineScope()
 
     fun refreshChannels(ws: WorkspaceDto) {
@@ -149,7 +158,6 @@ fun ShellScreen(
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             runCatching {
-                // Ensure the default workspace exists, then load workspaces.
                 repository.ensurePeytStudio()
                 val ws = repository.listWorkspaces()
                 workspaces = ws
@@ -158,7 +166,7 @@ fun ShellScreen(
         }
     }
 
-    // A channel is open -> full-screen chat (chat/kanban) with back nav.
+    // 频道打开 -> 全屏聊天/看板
     val open = openChannel
     if (open != null) {
         ChannelScreen(
@@ -192,26 +200,29 @@ fun ShellScreen(
 
     Scaffold(
         topBar = {
-            Surface(
-                tonalElevation = 3.dp,
-                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+            // 如果是账号页面，显示不同的 TopBar
+            if (showAccountPage) {
+                Surface(
+                    tonalElevation = 3.dp,
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = { showAccountPage = false }) {
+                            Icon(
+                                TdesignIcons.ChevronLeft,
+                                contentDescription = "返回",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                         Text(
-                            text = currentTab.label,
+                            text = "账号",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = currentWorkspace?.name ?: "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     Box {
@@ -264,13 +275,48 @@ fun ShellScreen(
                         }
                     }
                 }
+            } else {
+                Surface(
+                    tonalElevation = 3.dp,
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = currentTab.label,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = currentWorkspace?.name ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(onClick = { onLoggedOut() }) {
+                            Icon(
+                                TdesignIcons.LogOut,
+                                contentDescription = "退出登录",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
         },
         bottomBar = {
-            BottomNavBar(
-                current = currentTab,
-                onSelect = { currentTab = it },
-            )
+            // 账号页面隐藏底部导航栏
+            if (!showAccountPage) {
+                BottomNavBar(
+                    current = currentTab,
+                    onSelect = { currentTab = it },
+                )
+            }
         },
         content = { padding ->
             Box(
@@ -278,27 +324,39 @@ fun ShellScreen(
                     .fillMaxSize()
                     .padding(padding),
             ) {
-                when (currentTab) {
-                    Tab.Messages -> ChannelList(
-                        channels = channels.filter { it.spaceType != "card" },
-                        onSelect = { openChannel = it },
-                    )
-                    Tab.Work -> ChannelList(
-                        channels = channels.filter { it.spaceType == "card" },
-                        onSelect = { openChannel = it },
-                    )
-                    Tab.Inbox -> InboxScreen(
-                        repository = repository,
-                        onOpenChannel = { chatId ->
-                            val ch = channels.firstOrNull { it.chatId == chatId }
-                            if (ch != null) openChannel = ch
-                            else error = "频道未找到"
-                        },
-                    )
-                    Tab.Settings -> SettingsPage(
-                        onLoggedOut = onLoggedOut,
-                    )
+                when {
+                    showAccountPage -> {
+                        // 显示账号页面
+                        AccountPage(
+                            onBack = { showAccountPage = false }
+                        )
+                    }
+                    else -> {
+                        when (currentTab) {
+                            Tab.Messages -> ChannelList(
+                                channels = channels.filter { it.spaceType != "card" },
+                                onSelect = { openChannel = it },
+                            )
+                            Tab.Work -> ChannelList(
+                                channels = channels.filter { it.spaceType == "card" },
+                                onSelect = { openChannel = it },
+                            )
+                            Tab.Inbox -> InboxScreen(
+                                repository = repository,
+                                onOpenChannel = { chatId ->
+                                    val ch = channels.firstOrNull { it.chatId == chatId }
+                                    if (ch != null) openChannel = ch
+                                    else error = "频道未找到"
+                                },
+                            )
+                            Tab.Settings -> SettingsPage(
+                                onLoggedOut = onLoggedOut,
+                                onNavigateToAccount = { showAccountPage = true }
+                            )
+                        }
+                    }
                 }
+
                 if (error != null) {
                     Text(
                         text = error ?: "",
@@ -373,6 +431,31 @@ private fun BottomNavBar(
                 ),
             )
         }
+    }
+}
+
+/** 账号页面 */
+@Composable
+private fun AccountPage(
+    onBack: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "账号信息",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(modifier = Modifier.padding(16.dp))
+        // 这里可以添加账号信息内容
+        Text(
+            text = "用户信息待实现",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -505,9 +588,11 @@ private fun ChannelList(
     }
 }
 
+/** 设置页面 */
 @Composable
 private fun SettingsPage(
     onLoggedOut: () -> Unit,
+    onNavigateToAccount: () -> Unit,
 ) {
     var showThemeDialog by remember { mutableStateOf(false) }
     val currentTheme by ThemeManager.themeMode.collectAsState()
@@ -521,6 +606,33 @@ private fun SettingsPage(
                 .padding(16.dp)
         ) {
             Column {
+                // 账号行 - 点击跳转到账号页面
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigateToAccount() }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "账号",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        TdesignIcons.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Divider(
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+
                 // 主题切换行
                 Row(
                     modifier = Modifier
