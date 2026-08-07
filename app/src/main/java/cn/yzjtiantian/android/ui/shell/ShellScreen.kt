@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import cn.yzjtiantian.android.core.AccountManager
 import cn.yzjtiantian.android.data.dto.ChannelDto
 import cn.yzjtiantian.android.data.dto.WorkspaceDto
 import cn.yzjtiantian.android.data.repository.PeytRepository
@@ -87,8 +89,9 @@ private data class DirectChat(val chatId: Long, val name: String)
 fun ShellScreen(
     repository: PeytRepository,
     onLoggedOut: () -> Unit,
-    deepLink: String?,
-    onDeepLinkConsumed: () -> Unit,
+    accountManager: AccountManager,  // 你的功能
+    deepLink: String?,              // main 的功能
+    onDeepLinkConsumed: () -> Unit, // main 的功能
 ) {
     var workspaces by remember { mutableStateOf<List<WorkspaceDto>>(emptyList()) }
     var currentWorkspace by remember { mutableStateOf<WorkspaceDto?>(null) }
@@ -381,7 +384,8 @@ fun ShellScreen(
                     showAccountPage -> {
                         // 显示账号页面
                         AccountPage(
-                            onBack = { showAccountPage = false }
+                            onBack = { showAccountPage = false },
+                            accountManager = accountManager,
                         )
                     }
                     else -> {
@@ -493,25 +497,17 @@ private fun BottomNavBar(
 @Composable
 private fun AccountPage(
     onBack: () -> Unit,
+    accountManager: AccountManager,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Text(
-            text = "账号信息",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(modifier = Modifier.padding(16.dp))
-        // 这里可以添加账号信息内容
-        Text(
-            text = "用户信息待实现",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    val account = remember {
+        accountManager.getAllAccounts().firstOrNull { it.configured }
     }
+
+    ScrollContent(
+        paddingValues = PaddingValues(0.dp),
+        accountManager = accountManager,
+        accountId = account?.id,
+    )
 }
 
 /** Full-screen page for an open channel (chat or kanban) with a back button. */
