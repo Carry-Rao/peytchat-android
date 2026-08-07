@@ -175,10 +175,28 @@ class PeytRepository(
             ) as? String ?: "我"
         }
         return try {
-            getContact(contactId).optString("displayName").ifBlank { "我" }
+            val c = getContact(contactId)
+            c.optString("displayName").ifBlank { c.optString("address") }
         } catch (_: Exception) {
-            "我"
+            "陌生人"
         }
+    }
+
+    /**
+     * 直接消息的会话名:优先联系人显示名(core get_display_name:
+     * 本地名→authname→邮箱),与桌面端对齐;拿不到再用 chatlist 的 name。
+     */
+    private fun resolveDmName(item: JSONObject): String {
+        val dmContactId = item.optLong("dmChatContact", 0)
+        if (dmContactId > 0) {
+            runCatching {
+                val c = getContact(dmContactId)
+                val display = c.optString("displayName")
+                if (display.isNotBlank()) return display
+                c.optString("address").takeIf { it.isNotBlank() }?.let { return it }
+            }
+        }
+        return item.optString("name")
     }
 
     private fun lookupContactIdByAddr(addr: String): Long? {
@@ -646,7 +664,7 @@ class PeytRepository(
                     id = -1,
                     workspaceId = -1,
                     chatId = chatId,
-                    name = obj.optString("name"),
+                    name = resolveDmName(obj),
                     category = "",
                     position = 0,
                     topic = preview.ifBlank { null },
