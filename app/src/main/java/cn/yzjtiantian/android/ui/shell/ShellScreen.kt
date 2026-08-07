@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
@@ -202,6 +203,19 @@ fun ShellScreen(
         while (true) {
             delay(3000)
             refreshMessages()
+        }
+    }
+
+    // 系统返回:逐层收起(弹窗→菜单→账号页→聊天→非消息 Tab→退出)。
+    BackHandler {
+        when {
+            addAction != null -> addAction = null
+            expandMenu -> expandMenu = false
+            showAccountPage -> showAccountPage = false
+            openDirectChat != null -> openDirectChat = null
+            openChannel != null -> openChannel = null
+            currentTab != Tab.Messages -> currentTab = Tab.Messages
+            else -> Unit // 消息页根层,交给系统退出
         }
     }
 
