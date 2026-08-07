@@ -158,11 +158,17 @@ class PeytRepository(
     private fun getSecureJoinQr(chatId: Long?): String {
         val arr = JSONArray().put(accountId())
         if (chatId != null) arr.put(chatId) else arr.put(JSONObject.NULL)
-        return rpc.callRaw("get_chat_securejoin_qr_code", arr) as? String ?: ""
+        val qr = rpc.callRaw("get_chat_securejoin_qr_code", arr) as? String ?: ""
+        return qr.replaceFirst("https://i.delta.chat/", "https://peyt.yzjtiantian.cn/")
     }
 
     private fun secureJoin(qr: String): Long {
-        val result = rpc.callRaw("secure_join", JSONArray().put(accountId()).put(qr)) as? Number
+        val normalized = qr.replaceFirst(
+            "https://peyt.yzjtiantian.cn/",
+            "https://i.delta.chat/",
+        )
+        android.util.Log.d("PEYT", "[secure_join] in=$qr -> out=$normalized")
+        val result = rpc.callRaw("secure_join", JSONArray().put(accountId()).put(normalized)) as? Number
             ?: throw RpcException("secure_join returned no id")
         return result.toLong()
     }

@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cn.yzjtiantian.android.data.dto.ChannelDto
@@ -40,6 +41,8 @@ import cn.yzjtiantian.android.data.dto.ChatMessageDto
 import cn.yzjtiantian.android.data.repository.PeytRepository
 import cn.yzjtiantian.android.ui.theme.iMessageBubbleSelf
 import cn.yzjtiantian.android.ui.theme.iMessageBlue
+import android.os.Handler
+import android.os.Looper
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -61,6 +64,7 @@ fun ChatScreen(
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     suspend fun load() {
         withContext(Dispatchers.IO) {
@@ -118,7 +122,19 @@ fun ChatScreen(
                         if (text.isNotEmpty()) {
                             draft = ""
                             scope.launch(Dispatchers.IO) {
-                                runCatching { repository.sendMessage(channel.chatId, text) }
+                                try {
+                                    repository.sendMessage(channel.chatId, text)
+                                    android.util.Log.d("PEYT", "[send] ok chatId=${channel.chatId} text=$text")
+                                } catch (e: Exception) {
+                                    android.util.Log.e("PEYT", "[send] FAILED chatId=${channel.chatId} text=$text", e)
+                                    Handler(Looper.getMainLooper()).post {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "发送失败: ${e.message}",
+                                            android.widget.Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                }
                             }
                             scope.launch { load() }
                         }

@@ -115,8 +115,13 @@ fun AppRoot(bridge: PeytBridge,
                             Session.select(id)
                             Session.displayName =
                                 accountManager.getConfig(id, "displayname") ?: ""
+                            accountManager.disableForceEncryption(id)
+                            accountManager.startIo(id)
+                            android.util.Log.d("PEYT", "[startup] account=$id started IO, force_encryption disabled")
                             val bridgeEvents = EventBridge(rpc)
                             bridgeEvents.start()
+                        } else {
+                            android.util.Log.w("PEYT", "[startup] no configured account found")
                         }
                     }
                 }
