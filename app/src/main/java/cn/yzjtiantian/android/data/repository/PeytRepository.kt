@@ -1,6 +1,7 @@
 package cn.yzjtiantian.android.data.repository
 
 import cn.yzjtiantian.android.core.DeepLink
+import cn.yzjtiantian.android.core.PeytBridge
 import cn.yzjtiantian.android.core.Rpc
 import cn.yzjtiantian.android.core.RpcException
 import cn.yzjtiantian.android.core.Session
@@ -71,17 +72,16 @@ class PeytRepository(
     /**
      * Public text-send used by the chat UI.
      *
-     * 按 PEYT 信封协议(与桌面端 `build_envelope` 一致)包装正文:
-     * `{"type":"text","id":"<uuid>","payload":{"text":"..."}}`,
-     * 让对端(桌面端)能通过 `payload.text` 还原正文而非显示原始 JSON。
-     * 仅用于用户聊天消息;内部 `[CARD]`/`[PEYT_INVITE]` 仍走 [sendText] 前缀协议。
+     * 按 PEYT 信封协议包装正文:发送端(写)复用 Rust `peyt-envelope` 的
+     * `build_envelope`(与桌面端 envelope.rs 同构),产出
+     * `{"type":"text","id":"<uuid>","payload":{"text":"..."}}`。
+     * 内部 `[CARD]`/`[PEYT_INVITE]` 仍走 [sendText] 前缀协议。
+     * 接收端(读)解析见 [resolveEnvelopeText],为客户端自实现。
      */
     suspend fun sendMessage(chatId: Long, text: String): Long {
-        val envelope = JSONObject()
-            .put("type", "text")
-            .put("id", java.util.UUID.randomUUID().toString())
-            .put("payload", JSONObject().put("text", text))
-        return sendText(chatId, envelope.toString())
+        val payload = JSONObject().put("text", text).toString()
+        val envelope = PeytBridge.nativeBuildEnvelope("text", payload)
+        return sendText(chatId, envelope)
     }
 
     /**
