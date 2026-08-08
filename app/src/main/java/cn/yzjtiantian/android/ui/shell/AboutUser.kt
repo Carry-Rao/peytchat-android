@@ -61,6 +61,7 @@ fun CenterAlignedTopAppBarExample(
     navController: NavController,
     accountManager: AccountManager,
     selectedAccountId: Long? = null,
+    onLoggedOut: () -> Unit,
 ) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
 
@@ -94,6 +95,7 @@ fun CenterAlignedTopAppBarExample(
             paddingValues = innerPadding,
             accountManager = accountManager,
             accountId = selectedAccountId,
+            onLoggedOut = onLoggedOut,
         )
     }
 }
@@ -103,7 +105,7 @@ fun ScrollContent(
     paddingValues: PaddingValues,
     accountManager: AccountManager,
     accountId: Long? = null,
-    onLoggedOut: () -> Unit = {},
+    onLoggedOut: () -> Unit,
 ) {
     // 获取当前账户信息
     val account = remember(accountId) {
@@ -142,7 +144,6 @@ fun ScrollContent(
                 LogoutButton(onLoggedOut = onLoggedOut)
             }
         } else {
-            // 未配置账户状态
             item {
                 Box(
                     modifier = Modifier
@@ -194,24 +195,18 @@ private fun UserAvatarSection(account: Account) {
         }
 
         Spacer(modifier = Modifier.height(12.dp))
-
-        // 显示名称
         Text(
             text = account.displayName ?: "未命名",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
-
-        // 邮箱地址
         Text(
             text = account.addr ?: "未设置邮箱",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-
-        // 账户状态
         Text(
-            text = if (account.configured) "✅ 已配置" else "⏳ 未配置",
+            text = if (account.configured) "已配置" else "未配置",
             style = MaterialTheme.typography.bodySmall,
             color = if (account.configured)
                 MaterialTheme.colorScheme.primary
