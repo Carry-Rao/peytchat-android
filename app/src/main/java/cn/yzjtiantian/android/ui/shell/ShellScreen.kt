@@ -540,7 +540,7 @@ private fun ChannelScreen(
                     )
                 }
                 Text(
-                    text = "# ${channel.name}",
+                    text = if (channel.category.isBlank()) channel.name else "# ${channel.name}",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,

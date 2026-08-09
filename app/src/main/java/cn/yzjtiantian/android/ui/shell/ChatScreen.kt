@@ -1,5 +1,6 @@
 package cn.yzjtiantian.android.ui.shell
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,17 +36,23 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import cn.yzjtiantian.android.data.dto.ChannelDto
 import cn.yzjtiantian.android.data.dto.ChatMessageDto
 import cn.yzjtiantian.android.data.repository.PeytRepository
 import cn.yzjtiantian.android.ui.theme.iMessageBubbleSelf
 import cn.yzjtiantian.android.ui.theme.iMessageBlue
+import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import coil.compose.AsyncImage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -80,7 +87,7 @@ fun ChatScreen(
         listState.scrollToItem(0)
         // Poll for new messages (simple refresh loop).
         while (true) {
-            delay(3000)
+            delay(300)
             load()
         }
     }
@@ -112,16 +119,17 @@ fun ChatScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(6.dp),
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f),
                     placeholder = { Text("发消息到 ${channel.name}") },
-                    maxLines = 2,
-                    minLines = 1,
+                    // singleLine = true,
+                    shape = RoundedCornerShape(21.dp),
                 )
                 Spacer(Modifier.width(8.dp))
                 IconButton(
@@ -164,6 +172,8 @@ private fun MessageBubble(msg: ChatMessageDto) {
     val isOut = msg.isOut
     val bubbleColor = if (isOut) iMessageBubbleSelf else MaterialTheme.colorScheme.surfaceVariant
     val textColor = if (isOut) Color.White else MaterialTheme.colorScheme.onSurface
+    val context = LocalContext.current
+    val albumNumber = msg.text.trim().takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -192,7 +202,7 @@ private fun MessageBubble(msg: ChatMessageDto) {
                     bottomStart = 4.dp, bottomEnd = 14.dp,
                 )
             },
-            modifier = Modifier.widthIn(max = 300.dp),
+            modifier = Modifier.widthIn(max = 210.dp),
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -203,10 +213,35 @@ private fun MessageBubble(msg: ChatMessageDto) {
                         text = msg.text,
                         style = MaterialTheme.typography.bodyMedium,
                         color = textColor,
+                        textDecoration = if (albumNumber != null) TextDecoration.Underline else null,
+                        modifier = if (albumNumber != null) {
+                            Modifier.clickable {
+                                context.startActivity(
+                                    Intent(
+                                        Intent.ACTION_VIEW,
+                                        Uri.parse("https://18comic.vip/album/$albumNumber"),
+                                    ),
+                                )
+                            }
+                        } else {
+                            Modifier
+                        },
                     )
+                    if (albumNumber != null) {
+                        Spacer(Modifier.height(6.dp))
+                        AsyncImage(
+                            model = "https://cdn-msp3.18comic.vip/media/albums/$albumNumber.jpg",
+                            contentDescription = "专辑封面 $albumNumber",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .width(160.dp)
+                                .height(200.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                        )
+                    }
                     Spacer(Modifier.height(2.dp))
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        //modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = if (isOut) Arrangement.End else Arrangement.Start,
                     ) {
                         Text(
@@ -224,14 +259,15 @@ private fun MessageBubble(msg: ChatMessageDto) {
 
 @Composable
 private fun InfoLine(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 6.dp),
-    )
+    /* Use an empty impl instead of render it to make the app clearer */
+    //Text(
+    //    text = text,
+    //    style = MaterialTheme.typography.bodySmall,
+    //    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    //    modifier = Modifier
+    //        .fillMaxWidth()
+    //        .padding(horizontal = 24.dp, vertical = 6.dp),
+    //)
 }
 
 private fun formatTime(timestamp: Long): String {
