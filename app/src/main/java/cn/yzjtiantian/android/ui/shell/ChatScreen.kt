@@ -35,7 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -80,9 +80,9 @@ import kotlinx.coroutines.withContext
 private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
 private val PURE_NUMBER = Regex("""\d+""")
-private val JM_TAG = Regex("""<jm\s*=\s*['"]*(\d+)['"]*>""")
+private val JM_TAG = Regex("""(?i)<jm\s*=\s*['"]?\s*(\d+)\s*['"]?\s*>""")
 
-/** 从 ` <jm='114514'> `(允许单/双引号、无引号、空格)提取漫画编号; 不是漫画格式 → null。 */
+/** 从 ` <jm='114514'> `(允许单/双引号、无引号、空格、大小写)提取漫画编号; 不是漫画格式 → null。 */
 private fun parseJm(text: String): String? =
     JM_TAG.find(text)?.groupValues?.get(1)
 
@@ -94,8 +94,10 @@ fun ChatScreen(
 ) {
     var messages by remember { mutableStateOf<List<ChatMessageDto>>(emptyList()) }
     var draft by remember { mutableStateOf("") }
-    var pendingManga by remember { mutableStateOf<String?>(null) }
     var fullscreenImage by remember { mutableStateOf<ChatMessageDto?>(null) }
+    // 输入纯数字时, 在输入框上方询问是否作为漫画发送。
+    var mangaPrompt by remember { mutableStateOf(false) }
+    val draftNumber = draft.trim().takeIf { PURE_NUMBER.matches(it) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -172,6 +174,23 @@ fun ChatScreen(
                 }
             }
         }
+        // 纯数字 → 发送前在输入框上方询问是否作为漫画。
+        if (mangaPrompt && draftNumber != null) {
+            MangaPromptBar(
+                number = draftNumber,
+                onSendManga = {
+                    sendText("<jm='$draftNumber'>")
+                    draft = ""
+                    mangaPrompt = false
+                },
+                onSendPlain = {
+                    sendText(draftNumber)
+                    draft = ""
+                    mangaPrompt = false
+                },
+                onDismiss = { mangaPrompt = false },
+            )
+        }
         Surface(
             tonalElevation = 2.dp,
             modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
@@ -184,7 +203,13 @@ fun ChatScreen(
             ) {
                 OutlinedTextField(
                     value = draft,
-                    onValueChange = { draft = it },
+                    onValueChange = {
+                        draft = it
+                        // 一旦不再是纯数字就收起漫画询问。
+                        if (it.trim().let { n -> n.isNotEmpty() && !PURE_NUMBER.matches(n) }) {
+                            mangaPrompt = false
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("发消息到 ${channel.name}") },
                     maxLines = 4,
@@ -203,8 +228,8 @@ fun ChatScreen(
                         val text = draft.trim()
                         if (text.isEmpty()) return@IconButton
                         if (PURE_NUMBER.matches(text)) {
-                            // 纯数字:询问是否为漫画, 是则按 <jm='114514'> 格式发送
-                            pendingManga = text
+                            // 纯数字:先在上方询问是否为漫画, 用户确认后再按格式发送。
+                            mangaPrompt = true
                         } else {
                             sendText(text)
                             draft = ""
@@ -219,32 +244,6 @@ fun ChatScreen(
                 }
             }
         }
-    }
-
-    pendingManga?.let { number ->
-        AlertDialog(
-            onDismissRequest = { pendingManga = null },
-            title = { Text("数字消息") },
-            text = { Text("检测到纯数字「$number」，要作为 18comic 漫画链接发送吗？") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        sendText("<jm='$number'>")
-                        draft = ""
-                        pendingManga = null
-                    },
-                ) { Text("发送漫画") }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        sendText(number)
-                        draft = ""
-                        pendingManga = null
-                    },
-                ) { Text("普通消息") }
-            },
-        )
     }
 
     // 图片放大:全屏展示(重采样到更高分辨率)。
@@ -277,6 +276,40 @@ fun ChatScreen(
 }
 
 private val jmLinkBase = "https://18comic.vip/album/"
+
+/** 发送前询问:数字作为漫画(18comic)链接发送, 还是普通消息。 */
+@Composable
+private fun MangaPromptBar(
+    number: String,
+    onSendManga: () -> Unit,
+    onSendPlain: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "「$number」要作为漫画链接发送吗？",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onSendManga) { Text("作为漫画") }
+            TextButton(onClick = onSendPlain) { Text("普通发送") }
+            IconButton(onClick = onDismiss, modifier = Modifier.width(32.dp)) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "取消",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun MessageBubble(msg: ChatMessageDto, onOpenImage: (ChatMessageDto) -> Unit) {
@@ -344,7 +377,7 @@ private fun MangaView(jm: String, textColor: Color) {
     val context = LocalContext.current
     Column {
         Text(
-            text = "<jm='$jm'>",
+            text = jm,
             style = MaterialTheme.typography.bodyMedium,
             color = textColor,
             textDecoration = TextDecoration.Underline,
