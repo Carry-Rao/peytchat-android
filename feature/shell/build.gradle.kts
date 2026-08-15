@@ -30,6 +30,7 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":data"))
     implementation(project(":theme"))
+    implementation(project(":patch-api"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.foundation.layout)
