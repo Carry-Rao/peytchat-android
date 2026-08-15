@@ -27,7 +27,7 @@ import java.security.MessageDigest
  *     {
  *       "module": "shell",
  *       "version": "1.0.1",
- *       "url": "https://update.example.com/patches/shell_1.0.1.dex",
+ *       "url": "https://peyt.org/peytchat-android-update/shell_1.0.1.dex",
  *       "md5": "d41d8cd98f00b204e9800998ecf8427e"
  *     }
  *   ]
@@ -46,8 +46,8 @@ class HotUpdateManager(private val context: Context) {
         private const val PREF_NAME = "peyt_hot_update"
         private const val PATCH_DIR = "patches"
 
-        /** 默认更新清单地址，部署后替换为真实服务端地址（也可在设置里修改）。 */
-        const val DEFAULT_MANIFEST_URL = "https://update.example.com/peytchat/update.json"
+        /** 默认更新清单地址（线上服务端，设置页里也可修改并持久化）。 */
+        const val DEFAULT_MANIFEST_URL = "https://peyt.org/peytchat-android-update/update.json"
 
         // 模块名称常量
         const val MODULE_SHELL = "shell"
@@ -278,7 +278,12 @@ class HotUpdateManager(private val context: Context) {
         }.start()
     }
 
-    /** 通过 DexClassLoader 加载补丁并注册到 [ModuleManager]。 */
+    /**
+     * 通过 DexClassLoader 加载补丁并注册到 [ModuleManager]。
+     *
+     * 优先尝试按约定入口类加载（见 [tryLoadPatchEntry]），这才是真正生效的
+     * 补丁；入口类缺失时退回旧逻辑（仅验证基座类可解析）。
+     */
     fun loadPatch(module: String, patchFile: File): Boolean {
         return try {
             val dexDir = context.getDir("dex", Context.MODE_PRIVATE)
@@ -290,18 +295,14 @@ class HotUpdateManager(private val context: Context) {
                 context.classLoader
             )
 
-            when (module) {
-                MODULE_SHELL -> loadShellModule(classLoader)
-                MODULE_LOGIN -> loadLoginModule(classLoader)
-                MODULE_CHAT -> loadChatModule(classLoader)
-                MODULE_ACCOUNT -> loadAccountModule(classLoader)
-                else -> return false
+            val loaded = tryLoadPatchEntry(module, classLoader) ||
+                loadBaseModuleClass(module, classLoader)
+
+            if (loaded) {
+                ModuleManager.registerModule(module, classLoader)
+                prefs.edit().putBoolean("${module}_loaded", true).apply()
             }
-
-            ModuleManager.registerModule(module, classLoader)
-            prefs.edit().putBoolean("${module}_loaded", true).apply()
-
-            true
+            loaded
         } catch (e: Exception) {
             Log.e(TAG, "加载补丁失败: $module", e)
             false
@@ -361,44 +362,84 @@ class HotUpdateManager(private val context: Context) {
         }
     }
 
-    // ===== 模块加载方法 =====
+    // ===== 补丁入口类加载 =====
 
-    // 注意：parent-first 类加载下，若补丁中类名与基座同名，实际会解析到基座类。
-    // 这里仅保证补丁 DEX 能被正常解析并注册到 ModuleManager，供业务层反射使用。
+    /**
+     * 尝试按约定加载补丁入口类，这是补丁**真正生效**的机制。
+     *
+     * 约定（补丁作者只需遵守，无需依赖 App 任何接口）：
+     * - 入口类名：`cn.yzjtiantian.android.patch.<Module>Patch`
+     *   （shell → ShellPatch，login → LoginPatch，chat → ChatPatch，account → AccountPatch）
+     * - 类需有 public 无参构造函数；
+     * - 可选方法（按方法名反射调用）：
+     *   - `String module()`      模块名（缺省用清单中的 module）
+     *   - `String version()`     补丁版本
+     *   - `String description()` 描述（设置页展示用）
+     *   - `boolean apply(Context)` 应用补丁，返回是否成功（缺省视为成功）
+     *
+     * 入口类名在基座中不存在，parent-first 类加载下会命中补丁 dex 中的类，
+     * 因此能真正被实例化调用。
+     */
+    private fun tryLoadPatchEntry(module: String, classLoader: ClassLoader): Boolean {
+        val entryName =
+            "cn.yzjtiantian.android.patch.${module.replaceFirstChar { it.uppercase() }}Patch"
+        return try {
+            val clazz = classLoader.loadClass(entryName)
+            val instance = clazz.getDeclaredConstructor().newInstance()
 
-    private fun loadShellModule(classLoader: ClassLoader) {
-        try {
-            classLoader.loadClass("cn.yzjtiantian.android.ui.shell.ShellScreen")
-            Log.d(TAG, "Shell 模块加载成功")
+            val moduleName = invokeString(instance, "module") ?: module
+            val version = invokeString(instance, "version") ?: ""
+            val description = invokeString(instance, "description") ?: ""
+
+            val applied = try {
+                val method = clazz.getMethod("apply", Context::class.java)
+                (method.invoke(instance, context.applicationContext) as? Boolean) ?: true
+            } catch (e: NoSuchMethodException) {
+                true // 未提供 apply()，视为加载成功
+            }
+
+            if (applied) {
+                ModuleManager.registerPatch(
+                    LoadedPatch(moduleName, version, description, instance, classLoader)
+                )
+                Log.d(TAG, "补丁加载成功: $moduleName v$version — $description")
+            }
+            applied
         } catch (e: ClassNotFoundException) {
-            Log.e(TAG, "Shell 模块类未找到", e)
+            // 该 dex 没有约定入口类（可能是普通 dex 或旧格式），返回 false 走旧逻辑
+            Log.d(TAG, "补丁入口类未找到: $entryName")
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "补丁入口加载失败: $entryName", e)
+            false
         }
     }
 
-    private fun loadLoginModule(classLoader: ClassLoader) {
-        try {
-            classLoader.loadClass("cn.yzjtiantian.android.ui.login.LoginScreen")
-            Log.d(TAG, "Login 模块加载成功")
-        } catch (e: ClassNotFoundException) {
-            Log.e(TAG, "Login 模块类未找到", e)
+    /** 反射调用返回 String 的约定方法，失败返回 null。 */
+    private fun invokeString(instance: Any, methodName: String): String? {
+        return try {
+            instance.javaClass.getMethod(methodName).invoke(instance) as? String
+        } catch (e: Exception) {
+            null
         }
     }
 
-    private fun loadChatModule(classLoader: ClassLoader) {
-        try {
-            classLoader.loadClass("cn.yzjtiantian.android.ui.shell.ChatScreen")
-            Log.d(TAG, "Chat 模块加载成功")
-        } catch (e: ClassNotFoundException) {
-            Log.e(TAG, "Chat 模块类未找到", e)
+    /** 旧式加载：仅验证基座类可解析（parent-first 下补丁无法覆盖同名类）。 */
+    private fun loadBaseModuleClass(module: String, classLoader: ClassLoader): Boolean {
+        val baseName = when (module) {
+            MODULE_SHELL -> "cn.yzjtiantian.android.ui.shell.ShellScreen"
+            MODULE_LOGIN -> "cn.yzjtiantian.android.ui.login.LoginScreen"
+            MODULE_CHAT -> "cn.yzjtiantian.android.ui.shell.ChatScreen"
+            MODULE_ACCOUNT -> "cn.yzjtiantian.android.ui.shell.AccountPage"
+            else -> return false
         }
-    }
-
-    private fun loadAccountModule(classLoader: ClassLoader) {
-        try {
-            classLoader.loadClass("cn.yzjtiantian.android.ui.shell.AccountPage")
-            Log.d(TAG, "Account 模块加载成功")
+        return try {
+            classLoader.loadClass(baseName)
+            Log.d(TAG, "模块类可解析: $module ($baseName)")
+            true
         } catch (e: ClassNotFoundException) {
-            Log.e(TAG, "Account 模块类未找到", e)
+            Log.e(TAG, "模块类未找到: $baseName", e)
+            false
         }
     }
 }

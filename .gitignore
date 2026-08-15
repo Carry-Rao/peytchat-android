@@ -29,3 +29,8 @@ app/src/main/jniLibs/
 # Local reference to desktop source repo
 rv
 a.out
+
+# 热更新示例的本地构建产物（发布用文件在 updates/）
+patch-sample/out/
+patch-sample/*.dex
+patch-sample/update.json

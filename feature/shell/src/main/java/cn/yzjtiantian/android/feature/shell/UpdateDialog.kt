@@ -1,5 +1,6 @@
 package cn.yzjtiantian.android.ui.shell
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import cn.yzjtiantian.android.core.HotUpdateManager
+import cn.yzjtiantian.android.core.ModuleManager
 
 /**
  * 「检查更新」对话框：拉取更新清单 → 下载并校验补丁 → 记录（下次启动应用）。
@@ -38,6 +40,13 @@ fun UpdateDialog(onDismiss: () -> Unit) {
     var checking by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<HotUpdateManager.UpdateResult?>(null) }
     val installed = remember { hotUpdate.getInstalledVersions() }
+    // 本进程已加载生效的补丁（启动时由 loadPendingPatches 注册）
+    val loadedPatches = remember { ModuleManager.getLoadedPatches() }
+    // 示例：补丁通过 apply() 写入的提示消息（见 patch-sample/ShellPatch.java）
+    val patchMessage = remember {
+        context.getSharedPreferences("peyt_hot_update", Context.MODE_PRIVATE)
+            .getString("patch_message", null)
+    }
 
     AlertDialog(
         onDismissRequest = {
@@ -60,6 +69,29 @@ fun UpdateDialog(onDismiss: () -> Unit) {
                 if (installed.isNotEmpty()) {
                     Text(
                         text = "已安装补丁：" + installed.entries.joinToString("、") { "${it.key} v${it.value}" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                // 本进程已加载生效的补丁（说明补丁确实被加载并调用了）
+                if (loadedPatches.isNotEmpty()) {
+                    Text(
+                        text = "已加载补丁：",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    loadedPatches.forEach { p ->
+                        Text(
+                            text = "${p.module} v${p.version} — ${p.description}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                patchMessage?.let {
+                    Text(
+                        text = "补丁消息：$it",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
