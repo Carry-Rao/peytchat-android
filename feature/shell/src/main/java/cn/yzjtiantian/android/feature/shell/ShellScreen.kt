@@ -31,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -717,6 +718,7 @@ private fun SettingsPage(
     onNavigateToAccount: () -> Unit,
 ) {
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
     val currentTheme by ThemeManager.themeMode.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -797,6 +799,38 @@ private fun SettingsPage(
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
 
+                // 检查更新行
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showUpdateDialog = true }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.Refresh,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "检查更新",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        TdesignIcons.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Divider(
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+
                 // 退出登录行
 //                Row(
 //                    modifier = Modifier
@@ -830,6 +864,13 @@ private fun SettingsPage(
                 ThemeManager.setTheme(newTheme)
                 showThemeDialog = false
             }
+        )
+    }
+
+    // 检查更新对话框
+    if (showUpdateDialog) {
+        UpdateDialog(
+            onDismiss = { showUpdateDialog = false }
         )
     }
 }
