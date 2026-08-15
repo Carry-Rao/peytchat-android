@@ -29,3 +29,6 @@ app/src/main/jniLibs/
 # Local reference to desktop source repo
 rv
 a.out
+
+patch-sample/
+updates/

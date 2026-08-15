@@ -249,7 +249,8 @@ fun ChatScreen(
     // 图片放大:全屏展示(重采样到更高分辨率)。
     fullscreenImage?.let { m ->
         val full = remember(m.filePath) {
-            if (m.filePath != null) decodeImage(m.filePath, maxSize = 2048) else null
+            val filePath = m.filePath
+            if (filePath != null) decodeImage(filePath, maxSize = 2048) else null
         }
         Dialog(onDismissRequest = { fullscreenImage = null }) {
             Column(

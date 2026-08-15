@@ -84,9 +84,17 @@ fun AppRoot(
     deepLink: String?,
     onDeepLinkConsumed: () -> Unit,
 ) {
-    val context = LocalContext.current
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
-    val accountManager = remember(bridge) { AccountManager(Rpc(bridge)) }
+    val context = LocalContext.current
+    val rpc = remember(bridge) { Rpc(bridge) }
+    val accountManager = remember(bridge) { AccountManager(rpc) }
+    val eventBridge = remember { EventBridge(rpc, context) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            eventBridge.start()
+        }
+    }
 
     // One-time init on the IO dispatcher.
     LaunchedEffect(Unit) {
