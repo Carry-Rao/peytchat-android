@@ -1,7 +1,6 @@
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -20,27 +19,16 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
-
-    buildFeatures {
-        compose = true
-    }
 }
 
 // 补丁元信息（与 updates/update.json 保持一致）
-val patchModule = "chat"
-val patchVersion = "1.0.1"
+val patchModule = "data"
+val patchVersion = "0.0.1"
 
 dependencies {
+    // 只需 :core（ModuleManager / TextSendHook），不依赖 :data——
+    // 补丁类不覆盖基座类，只是注册新行为
     implementation(project(":core"))
-    implementation(project(":data"))
-    implementation(project(":patch-api"))
-    implementation(project(":theme"))
-
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.foundation.layout)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.material3)
-    implementation(libs.androidx.ui)
     implementation(libs.androidx.core.ktx)
 }
 
@@ -50,10 +38,10 @@ dependencies {
  *  - 用 SDK 里的 d8 打成 dex，输出到 updates/${patchModule}_${patchVersion}.dex。
  *
  * 用法:
- *   ./gradlew :patch-chat:packagePatchDex
+ *   ./gradlew :patch:data:packagePatchDex
  * 然后生成清单:
  *   OUT=updates/update.json ./scripts/gen-update-manifest.sh \
- *       https://peyt.org/peytchat-android-update/ updates/chat_1.0.1.dex
+ *       https://peyt.org/peytchat-android-update/ updates/data_0.0.1.dex
  */
 val packagePatchDex = tasks.register("packagePatchDex") {
     group = "hot-update"
@@ -81,8 +69,7 @@ val packagePatchDex = tasks.register("packagePatchDex") {
             commandLine(
                 d8.absolutePath,
                 "--lib", androidJar.absolutePath,
-                // minSdk=26 原生支持接口默认方法，无需 d8 脱糖（也避免找不到
-                // kotlin-stdlib / patch-api 等引用类型的警告）
+                // minSdk=26 原生支持接口默认方法，无需 d8 脱糖
                 "--min-api", "26",
                 "--output", outDir.absolutePath,
                 classesJar.absolutePath,

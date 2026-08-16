@@ -88,13 +88,6 @@ fun AppRoot(
     val context = LocalContext.current
     val rpc = remember(bridge) { Rpc(bridge) }
     val accountManager = remember(bridge) { AccountManager(rpc) }
-    val eventBridge = remember { EventBridge(rpc, context) }
-
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            eventBridge.start()
-        }
-    }
 
     // One-time init on the IO dispatcher.
     LaunchedEffect(Unit) {
@@ -153,7 +146,8 @@ fun AppRoot(
                             accountManager.disableForceEncryption(id)
                             accountManager.startIo(id)
                             android.util.Log.d("PEYT", "[startup] account=$id started IO, force_encryption disabled")
-                            val bridgeEvents = EventBridge(rpc)
+                            // 唯一的事件桥（带 context：启动时加载待应用补丁 + 处理热更新事件 + 事件分发）。
+                            val bridgeEvents = EventBridge(rpc, context)
                             bridgeEvents.start()
                             // 收到消息 → 解析 PEYT 信封:card.* 同步本地卡片, project.invite 自动加入频道。
                             // 副作用以 (from_id, envelope.id) 幂等去重(见 repository.handleIncomingEnvelope)。

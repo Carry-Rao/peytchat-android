@@ -2,6 +2,7 @@ package cn.yzjtiantian.android.ui.shell
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,6 +31,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
@@ -523,6 +525,17 @@ private fun ChannelScreen(
     channel: ChannelDto,
     onBack: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    var checkTick by remember { mutableStateOf(0) }
+    var canSend by remember { mutableStateOf<Boolean?>(null) }
+
+    // 打开频道时确认成员身份：未加入的（幽灵群/失效邀请）不进入聊天，展示提示 + 可删除。
+    LaunchedEffect(channel.chatId, checkTick) {
+        canSend = withContext(Dispatchers.IO) {
+            runCatching { repository.canSend(channel.chatId) }.getOrDefault(true)
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Surface(
             tonalElevation = 3.dp,
@@ -550,7 +563,19 @@ private fun ChannelScreen(
                 )
             }
         }
-        if (channel.spaceType == "card") {
+        if (canSend == false) {
+            // 未加入该群组：不进入聊天界面，提供「刷新」重试与「删除」清理
+            NotJoinedNotice(
+                channel = channel,
+                onRefresh = { checkTick++ },
+                onDelete = {
+                    scope.launch(Dispatchers.IO) {
+                        runCatching { repository.deleteChat(channel.chatId) }
+                        onBack()
+                    }
+                },
+            )
+        } else if (channel.spaceType == "card") {
             WorkScreen(repository = repository, channel = channel)
         } else {
             // 热更新扩展点：补丁注册了 ChatUiProvider 就用补丁界面，否则回退内置 ChatScreen
@@ -560,6 +585,37 @@ private fun ChannelScreen(
             } else {
                 ChatScreen(repository = repository, channel = channel)
             }
+        }
+    }
+}
+
+/** 未加入的群组提示（幽灵群/失效邀请），提供「刷新」重试与「删除」清理。 */
+@Composable
+private fun NotJoinedNotice(
+    channel: ChannelDto,
+    onRefresh: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = "尚未加入「${channel.name}」",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = "可能正在加入中，也可能是邀请已失效或加入未完成。\n可稍候点击「刷新」重试；确认没用的群可以删除。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            TextButton(onClick = onRefresh) { Text("刷新") }
+            TextButton(onClick = onDelete) { Text("删除该群组", color = MaterialTheme.colorScheme.error) }
         }
     }
 }

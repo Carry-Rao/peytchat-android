@@ -11,7 +11,7 @@ import cn.yzjtiantian.android.data.repository.PeytRepository
  * 若补丁注册了 [ChatUiProvider] 实现，就渲染补丁提供的界面；否则回退到内置
  * `ChatScreen`。
  *
- * 补丁侧约定（见 `patch/chat` 模块）：
+ * 补丁侧约定（新建补丁模块时参照 `patch/data` 的构建骨架）：
  * - 补丁入口类 `cn.yzjtiantian.android.patch.ChatPatch` 的 `apply(Context)` 里调用
  *   `ModuleManager.registerUiProvider("chat", ChatUiV2())` 完成注册；
  * - 补丁实现类（如 `ChatUiV2`）实现本接口，类名必须是基座中不存在的新类；
