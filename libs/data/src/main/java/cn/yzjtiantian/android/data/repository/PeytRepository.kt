@@ -70,8 +70,7 @@ class PeytRepository(
         return result.toLong()
     }
 
-    private suspend fun sendText(chatId: Long, text: String): Long {
-        ensureCanSend(chatId)
+    private fun sendText(chatId: Long, text: String): Long {
         val data = JSONObject().put("text", text)
         val result = rpc.callRaw(
             "send_msg",
@@ -81,78 +80,9 @@ class PeytRepository(
     }
 
     /**
-     * 当前账号能否向 chatId 发送消息（core `can_send`，含成员身份校验）。
-     * 失败（chat 不存在/网络错误等）一律视为不可发送。
-     */
-    suspend fun canSend(chatId: Long): Boolean = try {
-        rpc.callRaw("can_send", JSONArray().put(accountId()).put(chatId)) as? Boolean ?: false
-    } catch (e: Exception) {
-        android.util.Log.w("PEYT", "[can_send] chatId=$chatId 查询失败", e)
-        false
-    }
-
-    /** 发送前检查成员身份，未入群给出友好提示（避免 core 的 raw 错误）。 */
-    private suspend fun ensureCanSend(chatId: Long) {
-        if (canSend(chatId)) return
-        throw RpcException(sendBlockReason(chatId))
-    }
-
-    /**
-     * 诊断「为什么不能发送」：拉取聊天信息并给出准确原因。
-     * 同时打印日志，方便排查（群聊未入群 / 会话请求未接受 / 设备消息等）。
-     */
-    private suspend fun sendBlockReason(chatId: Long): String {
-        return try {
-            val info = rpc.call(
-                "get_basic_chat_info",
-                JSONArray().put(accountId()).put(chatId),
-            )
-            android.util.Log.w("PEYT", "[chat_info] chatId=$chatId raw=${info}")
-            val name = info.optString("name", "聊天")
-            // deltachat-jsonrpc 序列化为 camelCase
-            val type = info.optString("chatType", info.optString("chat_type", "?"))
-            val contactRequest = info.optBoolean("isContactRequest", info.optBoolean("is_contact_request", false))
-            val deviceChat = info.optBoolean("isDeviceChat", info.optBoolean("is_device_chat", false))
-            val archived = info.optBoolean("archived", false)
-            val selfTalk = info.optBoolean("isSelfTalk", info.optBoolean("is_self_talk", false))
-            val can = info.optBoolean("canSend", info.optBoolean("can_send", false))
-            android.util.Log.w(
-                "PEYT",
-                "[can_send] chatId=$chatId name=$name type=$type " +
-                    "is_contact_request=$contactRequest is_device_chat=$deviceChat " +
-                    "archived=$archived is_self_talk=$selfTalk can_send=$can",
-            )
-
-            // 群聊进一步确认成员身份（FullChat 里有 self_in_group / contact_ids）
-            if (type == "Group" || type == "InBroadcast") {
-                val full = runCatching {
-                    rpc.call("get_full_chat_by_id", JSONArray().put(accountId()).put(chatId))
-                }.getOrNull()
-                full?.let {
-                    val selfInGroup = it.optBoolean("selfInGroup", it.optBoolean("self_in_group", false))
-                    val contactIds = it.opt("contactIds") ?: it.opt("contact_ids")
-                    android.util.Log.w("PEYT", "[chat_info] chatId=$chatId self_in_group=$selfInGroup contact_ids=$contactIds")
-                }
-            }
-
-            when {
-                deviceChat -> "设备消息无法发送"
-                selfTalk -> "这是你自己的消息存档，无法发送"
-                contactRequest -> "对方还未接受会话请求，暂时无法发送"
-                type == "Group" || type == "InBroadcast" ->
-                    "尚未加入该群组「$name」，暂时无法发送（若刚加入请稍候，或重新扫码加入）"
-                else -> "暂时无法发送消息（chatId=$chatId, type=$type），请稍候重试"
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("PEYT", "[can_send] chatId=$chatId 诊断失败", e)
-            "暂时无法发送消息，请稍候重试"
-        }
-    }
-
-    /**
      * 组装并发送信封消息(复用 Rust `peyt-envelope`, 与桌面端 envelope.rs 同构)。
      */
-    private suspend fun sendEnvelope(chatId: Long, type: String, payload: JSONObject): Long =
+    private fun sendEnvelope(chatId: Long, type: String, payload: JSONObject): Long =
         sendText(chatId, PeytBridge.nativeBuildEnvelope(type, payload.toString()))
 
     /**
@@ -205,7 +135,6 @@ class PeytRepository(
             .put("viewtype", viewType)
             .put("file", file.absolutePath)
             .put("filename", filename)
-        ensureCanSend(chatId)
         val result = rpc.callRaw(
             "send_msg",
             JSONArray().put(accountId()).put(chatId).put(data),
@@ -404,8 +333,6 @@ class PeytRepository(
      *
      * 与 PC 端一致：core 的 `secure_join` 返回 chatId 后握手在后台进行
      * （邮件来回需要数秒到数十秒），这里**不阻塞**，立即返回 chatId。
-     * 若在握手完成前发消息，core 会报「not a member」——发送路径的
-     * [ensureCanSend] 会把它转成友好提示，UI 可轮询 [canSend] 感知就绪。
      */
     private suspend fun secureJoin(qr: String): Long {
         val normalized = qr.replaceFirst(
@@ -804,8 +731,8 @@ class PeytRepository(
     suspend fun createGroup(name: String): Long = createGroupChat(name)
 
     /**
-     * 删除聊天/频道：core `delete_chat` + 清理本地 Room 记录。
-     * 用于清理失败的 securejoin 留下的「幽灵群」（空群、自己不是成员，无法发送）。
+     * 删除聊天/频道：core `delete_chat` + 清理本地 Room 频道记录。
+     * 群聊与单聊通用。
      */
     suspend fun deleteChat(chatId: Long) {
         runCatching {
@@ -815,6 +742,28 @@ class PeytRepository(
         }
         db.channelDao().deleteByChatId(chatId)
         android.util.Log.d("PEYT", "[delete_chat] chatId=$chatId 已删除（core + Room）")
+    }
+
+    /**
+     * 删除好友：core `delete_contact`（连同其聊天一起删除）+ 兜底删聊天。
+     * 通过单聊的 chatId 定位联系人。
+     */
+    suspend fun deleteFriend(chatId: Long) {
+        val contactIds = runCatching {
+            rpc.callArray("get_chat_contacts", JSONArray().put(accountId()).put(chatId))
+        }.getOrDefault(JSONArray())
+        if (contactIds.length() > 0) {
+            val contactId = contactIds.optLong(0)
+            runCatching {
+                rpc.callRaw("delete_contact", JSONArray().put(accountId()).put(contactId))
+            }.onFailure {
+                android.util.Log.w("PEYT", "[delete_contact] contactId=$contactId 失败", it)
+            }
+            android.util.Log.d("PEYT", "[delete_friend] chatId=$chatId contactId=$contactId 已删除")
+        } else {
+            android.util.Log.w("PEYT", "[delete_friend] chatId=$chatId 未找到联系人，回退 delete_chat")
+        }
+        deleteChat(chatId)
     }
 
     /**
