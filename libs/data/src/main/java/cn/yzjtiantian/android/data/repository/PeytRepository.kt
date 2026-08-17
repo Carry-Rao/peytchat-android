@@ -1,10 +1,12 @@
 package cn.yzjtiantian.android.data.repository
 
 import cn.yzjtiantian.android.core.DeepLink
+import cn.yzjtiantian.android.core.ModuleManager
 import cn.yzjtiantian.android.core.PeytBridge
 import cn.yzjtiantian.android.core.Rpc
 import cn.yzjtiantian.android.core.RpcException
 import cn.yzjtiantian.android.core.Session
+import cn.yzjtiantian.android.core.TextSendHook
 import cn.yzjtiantian.android.data.AppDatabase
 import cn.yzjtiantian.android.data.dao.ContactRoleRow
 import cn.yzjtiantian.android.data.dto.CardDto
@@ -94,7 +96,11 @@ class PeytRepository(
      * 接收端(读)解析见 [resolveEnvelopeText],为客户端自实现。
      */
     suspend fun sendMessage(chatId: Long, text: String): Long {
-        val payload = JSONObject().put("text", text).toString()
+        // 数据层热更新钩子：补丁注册的 TextSendHook 可改写发送的文本
+        // （只作用于用户文本消息，不影响 card.*/project.invite 等信封协议）。
+        val finalText = (ModuleManager.getPatchService(TextSendHook.SERVICE_KEY) as? TextSendHook)
+            ?.transform(text) ?: text
+        val payload = JSONObject().put("text", finalText).toString()
         val envelope = PeytBridge.nativeBuildEnvelope("text", payload)
         return sendText(chatId, envelope)
     }
@@ -322,7 +328,13 @@ class PeytRepository(
         return qr.replaceFirst("https://i.delta.chat/", "https://peyt.yzjtiantian.cn/")
     }
 
-    private fun secureJoin(qr: String): Long {
+    /**
+     * 执行 securejoin 加入群/联系人。
+     *
+     * 与 PC 端一致：core 的 `secure_join` 返回 chatId 后握手在后台进行
+     * （邮件来回需要数秒到数十秒），这里**不阻塞**，立即返回 chatId。
+     */
+    private suspend fun secureJoin(qr: String): Long {
         val normalized = qr.replaceFirst(
             "https://peyt.yzjtiantian.cn/",
             "https://i.delta.chat/",
@@ -717,6 +729,42 @@ class PeytRepository(
 
     /** Creates a new (empty) group chat. */
     suspend fun createGroup(name: String): Long = createGroupChat(name)
+
+    /**
+     * 删除聊天/频道：core `delete_chat` + 清理本地 Room 频道记录。
+     * 群聊与单聊通用。
+     */
+    suspend fun deleteChat(chatId: Long) {
+        runCatching {
+            rpc.callRaw("delete_chat", JSONArray().put(accountId()).put(chatId))
+        }.onFailure {
+            android.util.Log.w("PEYT", "[delete_chat] chatId=$chatId core 删除失败", it)
+        }
+        db.channelDao().deleteByChatId(chatId)
+        android.util.Log.d("PEYT", "[delete_chat] chatId=$chatId 已删除（core + Room）")
+    }
+
+    /**
+     * 删除好友：core `delete_contact`（连同其聊天一起删除）+ 兜底删聊天。
+     * 通过单聊的 chatId 定位联系人。
+     */
+    suspend fun deleteFriend(chatId: Long) {
+        val contactIds = runCatching {
+            rpc.callArray("get_chat_contacts", JSONArray().put(accountId()).put(chatId))
+        }.getOrDefault(JSONArray())
+        if (contactIds.length() > 0) {
+            val contactId = contactIds.optLong(0)
+            runCatching {
+                rpc.callRaw("delete_contact", JSONArray().put(accountId()).put(contactId))
+            }.onFailure {
+                android.util.Log.w("PEYT", "[delete_contact] contactId=$contactId 失败", it)
+            }
+            android.util.Log.d("PEYT", "[delete_friend] chatId=$chatId contactId=$contactId 已删除")
+        } else {
+            android.util.Log.w("PEYT", "[delete_friend] chatId=$chatId 未找到联系人，回退 delete_chat")
+        }
+        deleteChat(chatId)
+    }
 
     /**
      * 直接消息列表,来自 core `get_chatlist`。

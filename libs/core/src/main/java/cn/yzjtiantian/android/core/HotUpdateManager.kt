@@ -54,9 +54,10 @@ class HotUpdateManager(private val context: Context) {
         const val MODULE_LOGIN = "login"
         const val MODULE_CHAT = "chat"
         const val MODULE_ACCOUNT = "account"
+        const val MODULE_DATA = "data"
 
         /** 所有可热更新模块。 */
-        val ALL_MODULES = listOf(MODULE_SHELL, MODULE_LOGIN, MODULE_CHAT, MODULE_ACCOUNT)
+        val ALL_MODULES = listOf(MODULE_SHELL, MODULE_LOGIN, MODULE_CHAT, MODULE_ACCOUNT, MODULE_DATA)
     }
 
     /** 一次检查更新的结果，回调在工作线程执行。 */

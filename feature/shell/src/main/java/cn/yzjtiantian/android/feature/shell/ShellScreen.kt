@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -30,7 +31,9 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -523,6 +526,12 @@ private fun ChannelScreen(
     channel: ChannelDto,
     onBack: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    // 直接聊天（好友）由 ShellScreen 包装成 id=-1 的 ChannelDto
+    val isDirectChat = channel.id == -1L
+    val deleteLabel = if (isDirectChat) "好友" else "群组"
+
     Column(modifier = Modifier.fillMaxSize()) {
         Surface(
             tonalElevation = 3.dp,
@@ -547,7 +556,17 @@ private fun ChannelScreen(
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                Spacer(modifier = Modifier.weight(1f))
+                // 删除好友/群组
+                IconButton(onClick = { showDeleteConfirm = true }) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "删除$deleteLabel",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
         if (channel.spaceType == "card") {
@@ -561,6 +580,31 @@ private fun ChannelScreen(
                 ChatScreen(repository = repository, channel = channel)
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除$deleteLabel") },
+            text = { Text("确定要删除「${channel.name}」吗？此操作不可恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        scope.launch(Dispatchers.IO) {
+                            runCatching {
+                                if (isDirectChat) repository.deleteFriend(channel.chatId)
+                                else repository.deleteChat(channel.chatId)
+                            }
+                            onBack()
+                        }
+                    }
+                ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+            },
+        )
     }
 }
 
