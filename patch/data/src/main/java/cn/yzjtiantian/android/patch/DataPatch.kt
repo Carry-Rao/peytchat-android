@@ -11,17 +11,16 @@ import cn.yzjtiantian.android.core.TextSendHook
  * `module()` / `version()` / `description()` / `apply(Context)`。
  *
  * `apply()` 在进程启动、补丁加载时于后台线程执行，这里注册一个
- * [TextSendHook]（发送文本钩子）：之后基座 `PeytRepository.sendMessage`
- * 发出的每条用户文本都会被自动追加后缀——**数据层行为真实被补丁改变**，
- * 用于验证热更新全链路（下载→校验→加载→apply→生效）。
+ * [TextSendHook]（发送文本钩子）。当前钩子为空操作（不修改消息），
+ * 仅用于验证热更新全链路（下载→校验→加载→apply→注册）。
  */
 class DataPatch {
 
     fun module(): String = "data"
 
-    fun version(): String = "0.0.1"
+    fun version(): String = "0.0.2"
 
-    fun description(): String = "数据层补丁：发送文本自动加后缀"
+    fun description(): String = "数据层补丁（示例，当前不修改消息）"
 
     fun apply(context: Context): Boolean {
         ModuleManager.registerPatchService(

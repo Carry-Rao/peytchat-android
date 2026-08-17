@@ -23,7 +23,7 @@ android {
 
 // 补丁元信息（与 updates/update.json 保持一致）
 val patchModule = "data"
-val patchVersion = "0.0.1"
+val patchVersion = "0.0.2"
 
 dependencies {
     // 只需 :core（ModuleManager / TextSendHook），不依赖 :data——
