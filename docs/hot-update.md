@@ -285,6 +285,55 @@ OUT=updates/update.json ./scripts/gen-update-manifest.sh \
 注意：钩子只作用于用户文本消息（`sendMessage`），不影响 card.*/project.invite 等
 信封协议消息（避免破坏协议格式）。
 
+## 消息通知热更新（MessageNotificationHook 扩展点）
+
+App 常驻消息服务（`MessageNotificationService`，前台服务 + 开机自启）收到新消息
+会弹系统通知；**通知的内容与是否弹通知可由补丁热更新**，无需发版。
+
+1. **稳定契约** `libs/core/.../core/MessageNotificationHook.kt`：
+   `fun interface MessageNotificationHook {
+      fun customize(context: Context, default: MessageNotification): MessageNotification?
+   }`，
+   注册键 `MessageNotificationHook.SERVICE_KEY = "message_notification_hook"`；
+   - `MessageNotification`（title/text/chatId/msgId/channelId/priority/autoCancel/groupKey）
+     是基座组装好的默认通知内容；
+   - 返回**修改后的** `MessageNotification` → 按定制内容弹通知；
+   - 返回 **null** → 静默该条消息（不弹通知）。
+2. **基座消费**：`MessageNotificationService.postIncomingNotification` 在弹通知前查询
+   `ModuleManager.getPatchService("message_notification_hook") as? MessageNotificationHook`，
+   有钩子就用定制结果（null 则跳过）。
+3. **补丁注册**：`patch/notification` 的入口类 `NotificationPatch.apply(Context)` 里
+   `ModuleManager.registerPatchService(MessageNotificationHook.SERVICE_KEY, NotificationTextHook())`。
+
+`patch/notification` 的 `NotificationTextHook` 给通知正文加「📣」前缀，用于验证
+「通知行为热更新」全链路。构建发布流程与上面相同：
+
+```bash
+./gradlew :patch:notification:packagePatchDex
+OUT=updates/update.json ./scripts/gen-update-manifest.sh \
+    https://peyt.org/peytchat-android-update/ updates/notification_0.0.1.dex
+```
+
+### 消息通知基础能力（基座内置，补丁之上）
+
+| 能力 | 说明 |
+| --- | --- |
+| 退后台/杀进程收消息 | `MessageNotificationService` 常驻前台服务（`specialUse` 类型）持有事件循环 |
+| 开机自启 | `BootReceiver` 监听 `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED`，有账号即拉起服务 |
+| 点击通知跳会话 | 通知携带 `peytchat://chat/<chatId>` 深链，ShellScreen 打开对应会话 |
+| 当前会话免打扰 | UI 打开会话时设置 `NotificationGate.activeChatId`，服务不再为该会话弹通知 |
+| 打开会话清通知/未读 | ChannelScreen 打开时 `marknoticed_chat` + 取消该会话通知 |
+| 通知折叠 | 同一会话的新消息更新同一条通知（按 chatId 做通知 id） |
+
+### 已知平台限制（重要）
+
+- **Android 15 / targetSdk 35**：`dataSync` 型前台服务既**不能**从 `BOOT_COMPLETED`
+  启动、又有 **6 小时/天超时**，因此消息服务改用 `specialUse` 类型（无超时、
+  可从开机广播启动；Play 上架需在控制台说明用途，自托管分发无此问题）。
+- **厂商深度省电 / 用户手动强制停止**仍可能杀后台：仿 QQ/微信的「永不掉线」
+  在无 FCM/厂商推送服务器的自托管架构下无法 100% 保证，FGS 已是 Android
+  允许范围内最接近的方案（QQ/微信亦依赖各自厂商推送通道）。
+
 ## 已知限制（重要）
 
 Android 类加载是 **parent-first** 的：`DexClassLoader` 的 parent 是应用类加载器，
@@ -304,9 +353,18 @@ Android 类加载是 **parent-first** 的：`DexClassLoader` 的 parent 是应�
 - `libs/core/.../core/ModuleManager.kt` — 模块/补丁/UI 提供者/补丁服务注册表（`LoadedPatch`）
 - `libs/core/.../core/EventBridge.kt` — 启动时加载待应用补丁 + 事件通道
 - `libs/core/.../core/TextSendHook.kt` — 数据层发送钩子稳定契约
+- `libs/core/.../core/MessageNotificationHook.kt` — 消息通知定制钩子稳定契约（热更新）
+- `libs/core/.../core/PeytEventLoop.kt` — 事件循环进程单例（服务与 UI 共享，避免事件被拆分）
+- `libs/core/.../core/CoreRuntime.kt` — native 一次性初始化 + 账号引导
+- `libs/core/.../core/NotificationGate.kt` — 当前打开会话标记（免打扰）
+- `libs/core/.../core/MessageNotifications.kt` — 通知 id 换算 / 取消通知（无资源依赖）
 - `libs/patch-api/.../patchapi/ChatUiProvider.kt` — 聊天界面稳定契约
-- `feature/shell/.../ui/shell/ShellScreen.kt` — 聊天区补丁优先/基座回退分发
+- `feature/shell/.../ui/shell/ShellScreen.kt` — 聊天区补丁优先/基座回退分发 + `peytchat://chat/` 深链
 - `feature/shell/.../ui/shell/UpdateDialog.kt` — 检查更新对话框（展示已加载补丁）
 - `patch/data/` — 数据层补丁模块（入口类 `DataPatch` + `DataTextHook` + packagePatchDex 任务）
+- `patch/notification/` — 消息通知补丁模块（入口类 `NotificationPatch` + `NotificationTextHook`）
+- `app/.../MessageNotificationService.kt` — 常驻前台服务（事件循环持有者 + 弹通知）
+- `app/.../NotificationHelper.kt` — 通知渠道/构造/投递（含前台服务常驻通知）
+- `app/.../BootReceiver.kt` — 开机/升级后自启消息服务
 - `feature/shell/.../ui/shell/ShellScreen.kt` — 设置页「检查更新」入口
 - `patch-sample/` — 可编译发布的补丁示例

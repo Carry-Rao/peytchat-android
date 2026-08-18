@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 消息通知（Android 13+ 运行时权限） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 常驻前台服务：退后台/杀进程后仍接收消息 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 开机自启消息接收服务 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -34,6 +41,30 @@
                 <data android:scheme="peytchat" />
             </intent-filter>
         </activity>
+
+        <!--
+            消息接收前台服务（仿 QQ/微信：App 不在前台也能收消息）。
+            类型用 specialUse：Android 15(targetSdk 35) 下 dataSync 型既不能从
+            BOOT_COMPLETED 启动、又有 6 小时/天超时，specialUse 无超时且可开机自启。
+        -->
+        <service
+            android:name=".MessageNotificationService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Receives chat messages via IMAP and posts system notifications even when the app is not in the foreground; self-hosted chat without a push server." />
+        </service>
+
+        <!-- 开机/升级后自启消息接收服务 -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

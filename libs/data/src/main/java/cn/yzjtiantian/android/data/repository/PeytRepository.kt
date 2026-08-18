@@ -420,6 +420,20 @@ class PeytRepository(
     suspend fun getChannelSpaceType(chatId: Long): String? =
         db.channelDao().getSpaceType(chatId)
 
+    /**
+     * 按 chatId 查找本地频道（通知点击跳转用）。
+     * 单聊/陌生群等非 workspace 频道返回 null，调用方再走直接消息路径。
+     */
+    suspend fun findChannelByChatId(chatId: Long): ChannelDto? =
+        db.channelDao().findByChatId(chatId)?.toDto(unread = freshMsgCount(chatId))
+
+    /** 把会话标记为已读（打开聊天时调用，联动未读数/通知）。 */
+    suspend fun markChatNoticed(chatId: Long) {
+        runCatching {
+            rpc.callRaw("marknoticed_chat", JSONArray().put(accountId()).put(chatId))
+        }
+    }
+
     private fun freshMsgCount(chatId: Long): Int {
         return try {
             (rpc.callRaw(

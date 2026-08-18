@@ -9,6 +9,7 @@
 | --- | --- | --- | --- |
 | 配置 / 行为 / 文案 / 颜色 | 气泡间距、是否显示时间、提示语、按钮行为 | 补丁 dex（现有能力） | 检查更新 + 杀进程重启 |
 | 数据层行为 | 发送文本自动加后缀等 | 补丁 dex（`patch/data`，已实现，见 §3.1） | 检查更新 + 杀进程重启 |
+| 消息通知行为 | 通知标题/正文/优先级、是否静默某类消息 | 补丁 dex（`patch/notification`，已实现，见 §3.3） | 检查更新 + 杀进程重启 |
 | chatUI 结构改动 | `ChatScreen` 布局、组件、交互流程重做 | 补丁 dex（`ChatUiProvider` 扩展点，见 §3.2） | 检查更新 + 杀进程重启 |
 | 其他 UI 结构改动 | `ShellScreen`/登录页布局重做 | 发新 APK | 重新安装 |
 
@@ -140,6 +141,43 @@ OUT=updates/update.json ./scripts/gen-update-manifest.sh \
 `ChatUiProvider` 即可；操作流程与 3.1 相同（`./gradlew :patch:<name>:packagePatchDex`）。
 
 稳定契约（`ChatUiProvider` / `TextSendHook`）签名发布后不要随意改（旧基座加载新补丁会失败）。
+
+### 3.3 消息通知行为热更新（示例：patch/notification）
+
+改「通知内容 / 是否弹通知」这类行为不用发版：
+
+- 稳定契约：`libs/core/.../core/MessageNotificationHook.kt`（注册键
+  `message_notification_hook`；`customize(context, default)` 返回 null 即静默）
+- 基座消费：`MessageNotificationService.postIncomingNotification` 弹通知前查
+  `ModuleManager.getPatchService("message_notification_hook") as? MessageNotificationHook`
+- 补丁模块：`patch/notification`（入口类 `NotificationPatch` +
+  `NotificationTextHook` + `packagePatchDex` 任务）
+
+每次改通知行为的操作流程：
+
+```bash
+# 1. 在 patch/notification/src/main/java/cn/yzjtiantian/android/patch/ 里改/新增
+#    MessageNotificationHook 实现（新类名），或直接改 NotificationTextHook 的 customize()
+
+# 2. 递增版本号：patch/notification/build.gradle.kts 里的 patchVersion（如 0.0.1 → 0.0.2）
+
+# 3. 构建补丁 dex（输出到 updates/notification_<version>.dex）
+./gradlew :patch:notification:packagePatchDex
+
+# 4. 生成清单
+OUT=updates/update.json ./scripts/gen-update-manifest.sh \
+    https://peyt.org/peytchat-android-update/ \
+    updates/notification_0.0.2.dex
+
+# 5. 把 updates/notification_0.0.2.dex 和 update.json 上传到服务器
+```
+
+用户侧生效：检查更新 → 杀进程重启 → 之后新消息通知即带补丁效果
+（示例 `NotificationTextHook` 给通知正文加「📣」前缀；返回 null 可静默某类消息）。
+
+> 注：常驻收消息/弹通知的基础能力（前台服务、开机自启、点击跳会话等）在基座
+> APK 里（`MessageNotificationService`/`BootReceiver`），补丁只定制通知行为；
+> 相关平台限制见 `docs/hot-update.md`「消息通知热更新」一节。
 
 ---
 
