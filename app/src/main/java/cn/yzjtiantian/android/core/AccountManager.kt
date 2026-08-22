@@ -83,6 +83,7 @@ class AccountManager(private val rpc: Rpc) {
                 .put("addr", email)
                 .put("password", password)
             rpc.callRaw("add_or_update_transport", JSONArray().put(id).put(param))
+            disableForceEncryption(id)
             startIo(id)
             selectAccount(id)
         } catch (e: Exception) {
@@ -192,6 +193,21 @@ class AccountManager(private val rpc: Rpc) {
             arr.put(value)
         }
         rpc.callRaw("set_config", arr)
+    }
+
+    /**
+     * Turns off `force_encryption` for the account, mirroring the desktop client.
+     *
+     * chatmail core defaults to force_encryption=1; with that set, a brand-new chat
+     * without the peer's public key cannot send its first (plaintext, Autocrypt
+     * key-carrying) message, so the key exchange deadlocks and messages stick at
+     * "sending" with a "no e2e" hint. The desktop client disables it to restore the
+     * standard Delta flow (first plaintext with key → auto-upgrade to encryption).
+     */
+    fun disableForceEncryption(accountId: Long) {
+        runCatching {
+            setConfig(accountId, "force_encryption", "0")
+        }
     }
 
     fun getConfig(accountId: Long, key: String): String? =

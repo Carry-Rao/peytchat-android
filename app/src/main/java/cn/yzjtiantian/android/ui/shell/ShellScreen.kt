@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
@@ -29,6 +30,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -42,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import cn.yzjtiantian.android.core.AccountManager
 import cn.yzjtiantian.android.data.dto.ChannelDto
@@ -52,8 +55,12 @@ import cn.yzjtiantian.android.ui.theme.TdesignIcons
 import cn.yzjtiantian.android.ui.theme.ThemeManager
 import cn.yzjtiantian.android.ui.theme.ThemeSelectionDialog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import cn.yzjtiantian.android.ui.theme.AppThemeMode.*
 
 private enum class Tab(val label: String) {
     Messages("消息"),
@@ -61,6 +68,18 @@ private enum class Tab(val label: String) {
     Inbox("通知"),
     Settings("设置"),
 }
+
+/** Actions of the top-right "+" menu, mirroring the desktop messagesPage. */
+private enum class AddAction {
+    SelectContact,
+    AddByEmail,
+    AddByLink,
+    NewGroup,
+    ShareInvite,
+}
+
+/** A 1:1 / group chat opened directly from the "+" menu (not a workspace channel). */
+private data class DirectChat(val chatId: Long, val name: String)
 
 /**
  * Post-login shell with bottom navigation bar + full-width pages.
@@ -70,14 +89,20 @@ private enum class Tab(val label: String) {
 fun ShellScreen(
     repository: PeytRepository,
     onLoggedOut: () -> Unit,
-    accountManager: AccountManager,
+    accountManager: AccountManager,  // 你的功能
+    deepLink: String?,              // main 的功能
+    onDeepLinkConsumed: () -> Unit, // main 的功能
 ) {
     var workspaces by remember { mutableStateOf<List<WorkspaceDto>>(emptyList()) }
     var currentWorkspace by remember { mutableStateOf<WorkspaceDto?>(null) }
     var channels by remember { mutableStateOf<List<ChannelDto>>(emptyList()) }
+    var dmChats by remember { mutableStateOf<List<ChannelDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var currentTab by remember { mutableStateOf(Tab.Messages) }
     var openChannel by remember { mutableStateOf<ChannelDto?>(null) }
+    var openDirectChat by remember { mutableStateOf<DirectChat?>(null) }
+    var expandMenu by remember { mutableStateOf(false) }
+    var addAction by remember { mutableStateOf<AddAction?>(null) }
     var showAccountPage by remember { mutableStateOf(false) }  // 控制账号页面显示
     val scope = rememberCoroutineScope()
 
@@ -90,6 +115,84 @@ fun ShellScreen(
         }
     }
 
+    /** 刷新 workspace 频道 + 直接消息(轮询用,不重置 currentWorkspace)。 */
+    fun refreshMessages() {
+        scope.launch(Dispatchers.IO) {
+            currentWorkspace?.let { ws ->
+                runCatching { repository.listChannels(ws.id) }
+                    .onSuccess { channels = it }
+                    .onFailure { error = it.message }
+            }
+            runCatching { repository.listDirectChats() }
+                .onSuccess { dmChats = it }
+                .onFailure { error = it.message }
+        }
+    }
+
+    fun openDirectChatById(chatId: Long, name: String) {
+        addAction = null
+        openDirectChat = DirectChat(chatId, name)
+    }
+
+    /** 处理深链(`peytchat://` 等)：建单聊/securejoin 后直接跳到会话。 */
+    fun openDeepLink(raw: String) {
+        scope.launch {
+            val chatId = withContext(Dispatchers.IO) {
+                runCatching { repository.addFriend(raw) }
+                    .onFailure { error = it.message }
+                    .getOrNull()
+            }
+            if (chatId != null) {
+                val name = withContext(Dispatchers.IO) {
+                    repository.getChatName(chatId).ifBlank { "新会话" }
+                }
+                openDirectChatById(chatId, name)
+            }
+        }
+    }
+
+    // 深链:登录后自动处理一次,处理完回调消费掉。
+    LaunchedEffect(deepLink) {
+        val link = deepLink?.takeIf { it.isNotBlank() }
+        if (link != null) {
+            openDeepLink(link)
+            onDeepLinkConsumed()
+        }
+    }
+
+    fun addByEmail(address: String) {
+        scope.launch {
+            val chatId = withContext(Dispatchers.IO) {
+                runCatching { repository.createChatByEmail(address) }
+                    .onFailure { error = it.message }
+                    .getOrNull()
+            }
+            if (chatId != null) openDirectChatById(chatId, address)
+        }
+    }
+
+    fun addByLink(input: String) {
+        scope.launch {
+            val chatId = withContext(Dispatchers.IO) {
+                runCatching { repository.addFriend(input) }
+                    .onFailure { error = it.message }
+                    .getOrNull()
+            }
+            if (chatId != null) openDirectChatById(chatId, input)
+        }
+    }
+
+    fun addGroup(name: String) {
+        scope.launch {
+            val chatId = withContext(Dispatchers.IO) {
+                runCatching { repository.createGroup(name) }
+                    .onFailure { error = it.message }
+                    .getOrNull()
+            }
+            if (chatId != null) openDirectChatById(chatId, name)
+        }
+    }
+
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             runCatching {
@@ -98,6 +201,24 @@ fun ShellScreen(
                 workspaces = ws
                 ws.firstOrNull()?.let { refreshChannels(it) }
             }.onFailure { error = it.message }
+        }
+        // 轮询刷新:收到新消息(陌生人单聊/请求)时直接消息区能及时出现。
+        while (true) {
+            delay(3000)
+            refreshMessages()
+        }
+    }
+
+    // 系统返回:逐层收起(弹窗→菜单→账号页→聊天→非消息 Tab→退出)。
+    BackHandler {
+        when {
+            addAction != null -> addAction = null
+            expandMenu -> expandMenu = false
+            showAccountPage -> showAccountPage = false
+            openDirectChat != null -> openDirectChat = null
+            openChannel != null -> openChannel = null
+            currentTab != Tab.Messages -> currentTab = Tab.Messages
+            else -> Unit // 消息页根层,交给系统退出
         }
     }
 
@@ -108,6 +229,27 @@ fun ShellScreen(
             repository = repository,
             channel = open,
             onBack = { openChannel = null },
+        )
+        return
+    }
+
+    // A direct chat (created via the "+" menu) is open -> full-screen chat.
+    val direct = openDirectChat
+    if (direct != null) {
+        ChannelScreen(
+            repository = repository,
+            channel = ChannelDto(
+                id = -1,
+                workspaceId = -1,
+                chatId = direct.chatId,
+                name = direct.name,
+                category = "",
+                position = 0,
+                topic = null,
+                unread = 0,
+                spaceType = "chat",
+            ),
+            onBack = { openDirectChat = null },
         )
         return
     }
@@ -148,7 +290,7 @@ fun ShellScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
@@ -159,17 +301,66 @@ fun ShellScreen(
                             )
                             Text(
                                 text = currentWorkspace?.name ?: "",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        IconButton(onClick = { onLoggedOut() }) {
-                            Icon(
-                                TdesignIcons.LogOut,
-                                contentDescription = "退出登录",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        Box {
+                            IconButton(onClick = { expandMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = "新建",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = expandMenu,
+                                onDismissRequest = { expandMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("选择联系人") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.SelectContact
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("通过邮箱添加") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.AddByEmail
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("通过链接添加") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.AddByLink
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("新建群聊") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.NewGroup
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("分享我的邀请链接") },
+                                    onClick = {
+                                        expandMenu = false
+                                        addAction = AddAction.ShareInvite
+                                    }
+                                )
+                            }
                         }
+                        //IconButton(onClick = { onLoggedOut() }) {
+                        //    Icon(
+                        //        TdesignIcons.LogOut,
+                        //        contentDescription = "退出登录",
+                        //        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        //    )
+                        //}
                     }
                 }
             }
@@ -199,9 +390,11 @@ fun ShellScreen(
                     }
                     else -> {
                         when (currentTab) {
-                            Tab.Messages -> ChannelList(
+                            Tab.Messages -> MessagesList(
+                                dmChats = dmChats,
                                 channels = channels.filter { it.spaceType != "card" },
-                                onSelect = { openChannel = it },
+                                onOpenDm = { openChannel = it },
+                                onOpenChannel = { openChannel = it },
                             )
                             Tab.Work -> ChannelList(
                                 channels = channels.filter { it.spaceType == "card" },
@@ -234,6 +427,44 @@ fun ShellScreen(
             }
         },
     )
+
+    // "+" menu dialogs, mirroring the desktop messagesPage actions.
+    when (addAction) {
+        AddAction.SelectContact -> SelectContactDialog(
+            repository = repository,
+            onPick = { c ->
+                addByEmail(c.address)
+            },
+            onDismiss = { addAction = null },
+        )
+        AddAction.AddByEmail -> InputDialog(
+            title = "添加好友",
+            placeholder = "输入对方邮箱地址",
+            confirmLabel = "添加",
+            keyboardType = KeyboardType.Email,
+            onConfirm = { addByEmail(it) },
+            onDismiss = { addAction = null },
+        )
+        AddAction.AddByLink -> InputDialog(
+            title = "添加好友",
+            placeholder = "粘贴邮箱 / peyt:// 邀请链接 / 链接",
+            confirmLabel = "加入",
+            onConfirm = { addByLink(it) },
+            onDismiss = { addAction = null },
+        )
+        AddAction.NewGroup -> InputDialog(
+            title = "创建群",
+            placeholder = "输入群名称",
+            confirmLabel = "创建",
+            onConfirm = { addGroup(it) },
+            onDismiss = { addAction = null },
+        )
+        AddAction.ShareInvite -> ShareInviteDialog(
+            repository = repository,
+            onDismiss = { addAction = null },
+        )
+        null -> {}
+    }
 }
 
 @Composable
@@ -294,7 +525,7 @@ private fun ChannelScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 8.dp),
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
@@ -321,6 +552,69 @@ private fun ChannelScreen(
     }
 }
 
+/** 消息页:顶部「直接消息」区 + workspace 频道。 */
+@Composable
+private fun MessagesList(
+    dmChats: List<ChannelDto>,
+    channels: List<ChannelDto>,
+    onOpenDm: (ChannelDto) -> Unit,
+    onOpenChannel: (ChannelDto) -> Unit,
+) {
+    if (dmChats.isEmpty() && channels.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "暂无会话",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        if (dmChats.isNotEmpty()) {
+            item(key = "dm-header") { SectionHeader(text = "直接消息") }
+            itemsIndexed(dmChats) { index, ch ->
+                ChannelRow(ch = ch, onClick = { onOpenDm(ch) })
+                if (index < dmChats.lastIndex) {
+                    DividerRow()
+                }
+            }
+        }
+        if (channels.isNotEmpty()) {
+            item(key = "channel-header") { SectionHeader(text = "频道") }
+            itemsIndexed(channels) { index, ch ->
+                ChannelRow(ch = ch, onClick = { onOpenChannel(ch) })
+                if (index < channels.lastIndex) {
+                    DividerRow()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+    )
+}
+
+@Composable
+private fun DividerRow() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 76.dp),
+        color = MaterialTheme.colorScheme.outlineVariant,
+    )
+}
+
 /** Channel list: iMessage-style rows with avatar, name, preview and time. */
 @Composable
 private fun ChannelList(
@@ -345,64 +639,69 @@ private fun ChannelList(
     }
     LazyColumn(modifier = modifier.fillMaxSize()) {
         itemsIndexed(channels) { index, ch ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect(ch) }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center,
-                ) {
+            ChannelRow(ch = ch, onClick = { onSelect(ch) })
+            if (index < channels.lastIndex) {
+                DividerRow()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChannelRow(
+    ch: ChannelDto,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = ch.name.firstOrNull()?.uppercase() ?: "#",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp),
+        ) {
+            Text(
+                text = ch.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (ch.unread > 0) {
+                Text(
+                    text = "${ch.unread} 条未读",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                )
+            } else {
+                ch.topic?.takeIf { it.isNotBlank() }?.let {
                     Text(
-                        text = ch.name.firstOrNull()?.uppercase() ?: "#",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 12.dp),
-                ) {
-                    Text(
-                        text = ch.name,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (ch.unread > 0) {
-                        Text(
-                            text = "${ch.unread} 条未读",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                        )
-                    } else {
-                        ch.topic?.takeIf { it.isNotBlank() }?.let {
-                            Text(
-                                text = it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
                 }
-            }
-            if (index < channels.lastIndex) {
-                HorizontalDivider(
-                    modifier = Modifier.padding(start = 76.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
             }
         }
     }

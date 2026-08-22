@@ -158,8 +158,8 @@ else
     exit 1
 fi
 
-info "清理旧的 APK..."
-./gradlew clean
+#info "清理旧的 APK..."
+#./gradlew clean
 
 info "构建 APK ($PROFILE)..."
 if ./gradlew assemble${PROFILE^}; then

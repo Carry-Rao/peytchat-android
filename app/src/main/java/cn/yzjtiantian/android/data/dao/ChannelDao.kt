@@ -10,6 +10,9 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE workspace_id = :workspaceId ORDER BY category, position, id")
     suspend fun listChannels(workspaceId: Long): List<ChannelEntity>
 
+    @Query("SELECT chat_id FROM channels")
+    suspend fun getAllChatIds(): List<Long>
+
     @Query("SELECT * FROM channels WHERE chat_id = :chatId")
     suspend fun findByChatId(chatId: Long): ChannelEntity?
 
