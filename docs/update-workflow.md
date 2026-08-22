@@ -8,7 +8,8 @@
 | 改动类型 | 举例 | 发布方式 | 用户如何生效 |
 | --- | --- | --- | --- |
 | 配置 / 行为 / 文案 / 颜色 | 气泡间距、是否显示时间、提示语、按钮行为 | 补丁 dex（现有能力） | 检查更新 + 杀进程重启 |
-| chatUI 结构改动 | `ChatScreen` 布局、组件、交互流程重做 | 补丁 dex（`patch/chat`，已实现，见 §3） | 检查更新 + 杀进程重启 |
+| 数据层行为 | 发送文本自动加后缀等 | 补丁 dex（`patch/data`，已实现，见 §3.1） | 检查更新 + 杀进程重启 |
+| chatUI 结构改动 | `ChatScreen` 布局、组件、交互流程重做 | 补丁 dex（`ChatUiProvider` 扩展点，见 §3.2） | 检查更新 + 杀进程重启 |
 | 其他 UI 结构改动 | `ShellScreen`/登录页布局重做 | 发新 APK | 重新安装 |
 
 **关键边界**：补丁 dex 只能提供「基座里不存在的新类 + 干点新事」，**不能**覆盖
@@ -97,41 +98,48 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ---
 
-## 3. chatUI 热更新（已实现）
+## 3. 行为热更新（TextSendHook 数据层钩子 + ChatUiProvider 界面，均已实现）
 
-扩展点架构已经搭好，现在**改 chatUI 不用发版**：
+### 3.1 数据层行为热更新（示例：patch/data）
 
-- 稳定契约：`libs/patch-api/.../patchapi/ChatUiProvider.kt`
-- 基座分发：`ShellScreen` 打开频道时查 `ModuleManager.getUiProvider("chat")`，
-  有补丁用补丁界面，否则回退内置 `ChatScreen`
-- 补丁模块：`patch/chat`（入口类 `ChatPatch` + UI 实现 + 打 dex 的 `packagePatchDex` 任务）
+改「发送出去的内容」这类数据层行为不用发版：
 
-每次改 chatUI 的操作流程：
+- 稳定契约：`libs/core/.../core/TextSendHook.kt`（注册键 `text_send_hook`）
+- 基座消费：`PeytRepository.sendMessage` 发送文本前查
+  `ModuleManager.getPatchService("text_send_hook") as? TextSendHook`
+- 补丁模块：`patch/data`（入口类 `DataPatch` + `DataTextHook` + `packagePatchDex` 任务）
+
+每次改数据层行为的操作流程：
 
 ```bash
-# 1. 在 patch/chat/src/main/java/cn/yzjtiantian/android/patch/ 里改/新增
-#    ChatUiProvider 实现（新类名，如 ChatUiV2），可自由引用基座的
-#    PeytRepository / ChannelDto / compose / 主题等类
+# 1. 在 patch/data/src/main/java/cn/yzjtiantian/android/patch/ 里改/新增
+#    TextSendHook 实现（新类名），或直接改 DataTextHook 的 transform()
 
-# 2. 递增版本号：patch/chat/build.gradle.kts 里的 patchVersion（如 1.0.1 → 1.0.2）
+# 2. 递增版本号：patch/data/build.gradle.kts 里的 patchVersion（如 0.0.1 → 0.0.2）
 
-# 3. 构建补丁 dex（输出到 updates/chat_<version>.dex）
-./gradlew :patch:chat:packagePatchDex
+# 3. 构建补丁 dex（输出到 updates/data_<version>.dex）
+./gradlew :patch:data:packagePatchDex
 
-# 4. 生成清单（可同时带上其他模块的补丁）
+# 4. 生成清单
 OUT=updates/update.json ./scripts/gen-update-manifest.sh \
     https://peyt.org/peytchat-android-update/ \
-    updates/chat_1.0.2.dex
+    updates/data_0.0.2.dex
 
-# 5. 把 updates/chat_1.0.2.dex 和 update.json 上传到服务器
+# 5. 把 updates/data_0.0.2.dex 和 update.json 上传到服务器
 ```
 
-用户侧生效：检查更新 → 杀进程重启 → 打开任意聊天频道即显示补丁界面。
+用户侧生效：检查更新 → 杀进程重启 → 之后发出的每条文本都带补丁效果
+（示例 `DataTextHook` 给文本追加「（数据层补丁 v0.0.1）」后缀）。
 
-示例：`patch/chat` 里的 `ChatUiV2` 渲染「补丁版聊天界面 v2」，
-已随 `updates/chat_1.0.1.dex` 打包，上传即生效。
+注意：钩子只作用于用户文本消息，不影响 card.*/project.invite 信封协议。
 
-注意：`ChatUiProvider` 是稳定契约，签名发布后不要随意改（旧基座加载新补丁会失败）。
+### 3.2 聊天界面热更新（ChatUiProvider）
+
+机制保留在基座（`libs/patch-api` + `ShellScreen` 分发，回退内置 `ChatScreen`），
+需要时新建补丁模块（复制 `patch/data` 的构建骨架，加 compose 依赖）实现
+`ChatUiProvider` 即可；操作流程与 3.1 相同（`./gradlew :patch:<name>:packagePatchDex`）。
+
+稳定契约（`ChatUiProvider` / `TextSendHook`）签名发布后不要随意改（旧基座加载新补丁会失败）。
 
 ---
 

@@ -26,6 +26,7 @@ object ModuleManager {
     private val moduleClasses = mutableMapOf<String, Class<*>>()
     private val patches = mutableMapOf<String, LoadedPatch>()
     private val uiProviders = mutableMapOf<String, Any>()
+    private val patchServices = mutableMapOf<String, Any>()
 
     fun registerModule(name: String, classLoader: ClassLoader) {
         modules[name] = classLoader
@@ -83,6 +84,21 @@ object ModuleManager {
     /** 查询某模块的 UI 提供者，无则返回 null。 */
     fun getUiProvider(module: String): Any? = uiProviders[module]
 
+    /**
+     * 注册一个补丁服务（补丁入口类在 apply() 里调用）。
+     * 具体类型由基座侧契约约定（如 [TextSendHook]），这里仅做通用存储。
+     */
+    fun registerPatchService(serviceKey: String, service: Any) {
+        patchServices[serviceKey] = service
+        android.util.Log.d("ModuleManager", "补丁服务已注册: key=$serviceKey service=${service.javaClass.name}")
+    }
+
+    /** 查询补丁服务，无则返回 null。 */
+    fun getPatchService(serviceKey: String): Any? = patchServices[serviceKey]
+
+    /** 所有已注册的补丁服务。 */
+    fun getPatchServices(): Map<String, Any> = patchServices.toMap()
+
     /** 所有已注册的 UI 提供者。 */
     fun getUiProviders(): Map<String, Any> = uiProviders.toMap()
 
@@ -91,5 +107,6 @@ object ModuleManager {
         moduleClasses.clear()
         patches.clear()
         uiProviders.clear()
+        patchServices.clear()
     }
 }

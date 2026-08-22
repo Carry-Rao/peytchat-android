@@ -28,7 +28,7 @@ include(
     ":data",
     ":theme",
     ":patch-api",
-    ":patch:chat",
+    ":patch:data",
     ":feature:shell",
     ":feature:login",
     ":feature:chat"
