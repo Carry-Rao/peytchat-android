@@ -65,6 +65,55 @@ class PeytRepository(
         return result.toLong()
     }
 
+    /** Public text-send used by the chat UI. */
+    suspend fun sendMessage(chatId: Long, text: String): Long = sendText(chatId, text)
+
+    /**
+     * Message IDs for a chat, oldest-first. Mirrors desktop `get_chat_msgs`
+     * windowing (last 50 items).
+     */
+    suspend fun getChatMessageIds(chatId: Long): List<Long> {
+        val ids = rpc.callArray(
+            "get_message_ids",
+            JSONArray().put(accountId()).put(chatId).put(false).put(false),
+        )
+        val out = ArrayList<Long>(ids.length())
+        for (i in 0 until ids.length()) {
+            out.add(ids.optLong(i))
+        }
+        return out.takeLast(50)
+    }
+
+    /** Fetches one message from core. */
+    suspend fun getChatMessage(msgId: Long): CoreMessageDto = getMessage(msgId)
+
+    /** Rendered messages for a chat, oldest-first. */
+    suspend fun getChatMessages(chatId: Long): List<cn.yzjtiantian.android.data.dto.ChatMessageDto> {
+        val ids = getChatMessageIds(chatId)
+        return ids.mapNotNull { id ->
+            try {
+                val m = getMessage(id)
+                val isInfo = runCatching {
+                    rpc.call(
+                        "get_message",
+                        JSONArray().put(accountId()).put(id),
+                    ).optBoolean("isInfo", false)
+                }.getOrDefault(false)
+                cn.yzjtiantian.android.data.dto.ChatMessageDto(
+                    msgId = m.id,
+                    fromId = m.fromId,
+                    fromName = if (m.fromId == SELF_CONTACT_ID) "我" else contactDisplayName(m.fromId),
+                    text = m.text,
+                    timestamp = m.timestamp,
+                    isOut = m.fromId == SELF_CONTACT_ID,
+                    isInfo = isInfo,
+                )
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
     private fun getMessage(msgId: Long): CoreMessageDto {
         val obj = rpc.call("get_message", JSONArray().put(accountId()).put(msgId))
         return CoreMessageDto(

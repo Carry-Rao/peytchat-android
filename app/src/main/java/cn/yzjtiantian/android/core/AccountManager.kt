@@ -97,24 +97,91 @@ class AccountManager(private val rpc: Rpc) {
     }
 
     /**
-     * Creates a chatmail account via the nine.testrun.org QR invite.
-     * Mirrors the desktop `create_chatmail_account` command.
+     * Creates a chatmail account via the given server.
+     *
+     * [server] is a chatmail onboarding URL/host, e.g. `yzjtiantian.cn/new`
+     * or `nine.testrun.org/new`. The onboarding POST is issued directly from
+     * Android (no JNI/core dependency): we call `POST <server>/new`, parse the
+     * returned `{email, password}`, then configure the account with core via
+     * `add_or_update_transport` (same path as [login]).
+     *
+     * This keeps the JNI bridge limited to core's IMAP/SMTP + protocol/plugins,
+     * and lets us surface HTTP errors (e.g. a 502 from the chatmail server)
+     * directly to the user with proper context.
      */
-    fun createChatmailAccount(displayName: String): Long {
-        val id = addAccount()
-        try {
-            rpc.callRaw("add_transport_from_qr", JSONArray().put(id).put("dcaccount:nine.testrun.org"))
-            rpc.call("set_config", JSONArray().put(id).put("displayname").put(displayName))
-            selectAccount(id)
-            startIo(id)
-        } catch (e: Exception) {
-            try {
-                removeAccount(id)
-            } catch (_: Exception) {
-            }
-            throw e
-        }
+    fun createChatmailAccount(displayName: String, server: String = DEFAULT_CHATMAIL_SERVER): Long {
+        val (email, password) = requestChatmailCredentials(server)
+        // Configure the account with core exactly like a classic email login.
+        val id = login(email = email, password = password)
+        rpc.callRaw("set_config", JSONArray().put(id).put("displayname").put(displayName))
         return id
+    }
+
+    /**
+     * POSTs to the chatmail onboarding URL and returns the issued credentials.
+     * The server responds with `{email, password}` on success, or an error
+     * response with a `reason` field on failure.
+     */
+    private fun requestChatmailCredentials(server: String): Pair<String, String> {
+        val url = normalizeChatmailServer(server)
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        return try {
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 15000
+            conn.readTimeout = 15000
+            conn.doOutput = true
+            conn.setRequestProperty("Accept", "application/json")
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.outputStream.use { it.write("{}".toByteArray()) }
+            val code = conn.responseCode
+            val body = if (code in 200..299) {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+            }
+            if (code !in 200..299) {
+                val reason = runCatching {
+                    JSONObject(body).optString("reason")
+                }.getOrDefault(body)
+                throw RpcException("chatmail 注册失败 (HTTP $code): $reason")
+            }
+            val json = JSONObject(body)
+            val email = json.optString("email").ifBlank {
+                throw RpcException("chatmail 服务器未返回 email")
+            }
+            val password = json.optString("password").ifBlank {
+                throw RpcException("chatmail 服务器未返回 password")
+            }
+            email to password
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    companion object {
+        /** Default chatmail onboarding server (host or URL). */
+        const val DEFAULT_CHATMAIL_SERVER: String = "yzjtiantian.cn/new"
+
+        /**
+         * Normalizes a user-supplied server into an onboarding HTTP(S) URL.
+         * Accepts `example.org`, `example.org/new`, `example.org:443`,
+         * `https://example.org/new`, or an already-url `https://...`.
+         *
+         * A bare host/port (no scheme) is always treated as a **chatmail
+         * endpoint**, not a mail server: it is wrapped in `https://`, and the
+         * chatmail path (`/new`) is appended if absent. This avoids core's
+         * `login_param_from_host`, which would take a bare `host` (even one
+         * carrying `:port`) as the email-addressing domain verbatim and fail
+         * DNS.
+         */
+        fun normalizeChatmailServer(server: String): String {
+            val trimmed = server.trim().removeSuffix("/")
+            if (trimmed.isEmpty()) throw RpcException("empty chatmail server")
+            if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) {
+                return if (trimmed.endsWith("/new")) trimmed else "$trimmed/new"
+            }
+            return "https://$trimmed/new"
+        }
     }
 
     fun setConfig(accountId: Long, key: String, value: String?) {

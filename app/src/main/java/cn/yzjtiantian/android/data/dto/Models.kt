@@ -105,3 +105,14 @@ data class CoreMessageDto(
     val timestamp: Long,
     val viewType: String,
 )
+
+/** A rendered chat message for the UI. */
+data class ChatMessageDto(
+    val msgId: Long,
+    val fromId: Long,
+    val fromName: String,
+    val text: String,
+    val timestamp: Long,
+    val isOut: Boolean,
+    val isInfo: Boolean,
+)
