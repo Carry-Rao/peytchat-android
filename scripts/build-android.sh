@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # 用法:
-#   ./scripts/build-android-fixed.sh [release|debug]
+#   ./scripts/build-android.sh [release|debug]
 #   release: 构建 release 版本 (默认 debug)
 
 set -euo pipefail
@@ -77,7 +77,8 @@ if [[ ! -f "Cargo.toml" ]]; then
 fi
 
 info "构建 deltachat_ffi ($RUST_PROFILE)..."
-if cargo ndk -t "$NDK_ABI" "${CARGO_ARGS[@]}" build -p deltachat_ffi; then
+# ========== 修复点 1: 调整参数顺序 ==========
+if cargo ndk -t "$NDK_ABI" build "${CARGO_ARGS[@]}" -p deltachat_ffi; then
     success "deltachat_ffi 构建成功"
 else
     error "deltachat_ffi 构建失败"
@@ -101,7 +102,8 @@ if [[ ! -f "Cargo.toml" ]]; then
 fi
 
 info "构建 peytchat-bridge ($RUST_PROFILE)..."
-if cargo ndk -t "$NDK_ABI" "${CARGO_ARGS[@]}" build -p peytchat-bridge; then
+# ========== 修复点 2: 调整参数顺序 ==========
+if cargo ndk -t "$NDK_ABI" build "${CARGO_ARGS[@]}" -p peytchat-bridge; then
     success "peytchat-bridge 构建成功"
 else
     error "peytchat-bridge 构建失败"
@@ -157,9 +159,6 @@ else
     error ".so 文件未在预期位置: $JNI_LIBS_DIR/"
     exit 1
 fi
-
-#info "清理旧的 APK..."
-#./gradlew clean
 
 info "构建 APK ($PROFILE)..."
 if ./gradlew assemble${PROFILE^}; then
@@ -219,5 +218,5 @@ echo ""
 echo "下一步:"
 echo "  1. 安装: adb install $APK_PATH"
 echo "  2. 查看日志: adb logcat | grep -E \"cn.yzjtiantian.android|deltachat|rust\""
-echo "  3. 重新构建: ./scripts/build-android-fixed.sh [debug|release]"
+echo "  3. 重新构建: ./scripts/build-android.sh [debug|release]"
 echo "=========================================="
