@@ -25,6 +25,8 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import cn.yzjtiantian.android.data.dto.ChannelDto
 import cn.yzjtiantian.android.data.dto.WorkspaceDto
@@ -49,6 +52,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.tooling.preview.Preview
 import cn.yzjtiantian.android.ui.theme.AppThemeMode
@@ -61,6 +66,18 @@ private enum class Tab(val label: String) {
     Inbox("通知"),
     Settings("设置"),
 }
+
+/** Actions of the top-right "+" menu, mirroring the desktop messagesPage. */
+private enum class AddAction {
+    SelectContact,
+    AddByEmail,
+    AddByLink,
+    NewGroup,
+    ShareInvite,
+}
+
+/** A 1:1 / group chat opened directly from the "+" menu (not a workspace channel). */
+private data class DirectChat(val chatId: Long, val name: String)
 
 /**
  * Post-login shell in QQ style: bottom navigation bar + full-width pages.
@@ -77,6 +94,9 @@ fun ShellScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var currentTab by remember { mutableStateOf(Tab.Messages) }
     var openChannel by remember { mutableStateOf<ChannelDto?>(null) }
+    var openDirectChat by remember { mutableStateOf<DirectChat?>(null) }
+    var expandMenu by remember { mutableStateOf(false) }
+    var addAction by remember { mutableStateOf<AddAction?>(null) }
     val scope = rememberCoroutineScope()
 
     fun refreshChannels(ws: WorkspaceDto) {
@@ -85,6 +105,44 @@ fun ShellScreen(
             runCatching { repository.listChannels(ws.id) }
                 .onSuccess { channels = it }
                 .onFailure { error = it.message }
+        }
+    }
+
+    fun openDirectChatById(chatId: Long, name: String) {
+        addAction = null
+        openDirectChat = DirectChat(chatId, name)
+    }
+
+    fun addByEmail(address: String) {
+        scope.launch {
+            val chatId = withContext(Dispatchers.IO) {
+                runCatching { repository.createChatByEmail(address) }
+                    .onFailure { error = it.message }
+                    .getOrNull()
+            }
+            if (chatId != null) openDirectChatById(chatId, address)
+        }
+    }
+
+    fun addByLink(input: String) {
+        scope.launch {
+            val chatId = withContext(Dispatchers.IO) {
+                runCatching { repository.addFriend(input) }
+                    .onFailure { error = it.message }
+                    .getOrNull()
+            }
+            if (chatId != null) openDirectChatById(chatId, input)
+        }
+    }
+
+    fun addGroup(name: String) {
+        scope.launch {
+            val chatId = withContext(Dispatchers.IO) {
+                runCatching { repository.createGroup(name) }
+                    .onFailure { error = it.message }
+                    .getOrNull()
+            }
+            if (chatId != null) openDirectChatById(chatId, name)
         }
     }
 
@@ -107,6 +165,27 @@ fun ShellScreen(
             repository = repository,
             channel = open,
             onBack = { openChannel = null },
+        )
+        return
+    }
+
+    // A direct chat (created via the "+" menu) is open -> full-screen chat.
+    val direct = openDirectChat
+    if (direct != null) {
+        ChannelScreen(
+            repository = repository,
+            channel = ChannelDto(
+                id = -1,
+                workspaceId = -1,
+                chatId = direct.chatId,
+                name = direct.name,
+                category = "",
+                position = 0,
+                topic = null,
+                unread = 0,
+                spaceType = "chat",
+            ),
+            onBack = { openDirectChat = null },
         )
         return
     }
@@ -135,12 +214,54 @@ fun ShellScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = { onLoggedOut() }) {
-                        Icon(
-                            TdesignIcons.LogOut,
-                            contentDescription = "退出登录",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Box {
+                        IconButton( onClick = { expandMenu = true } ) {
+                           Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = "新建",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = expandMenu,
+                            onDismissRequest = { expandMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("选择联系人") },
+                                onClick = {
+                                    expandMenu = false
+                                    addAction = AddAction.SelectContact
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("通过邮箱添加") },
+                                onClick = {
+                                    expandMenu = false
+                                    addAction = AddAction.AddByEmail
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("通过链接添加") },
+                                onClick = {
+                                    expandMenu = false
+                                    addAction = AddAction.AddByLink
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("新建群聊") },
+                                onClick = {
+                                    expandMenu = false
+                                    addAction = AddAction.NewGroup
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("分享我的邀请链接") },
+                                onClick = {
+                                    expandMenu = false
+                                    addAction = AddAction.ShareInvite
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -189,6 +310,44 @@ fun ShellScreen(
             }
         },
     )
+
+    // "+" menu dialogs, mirroring the desktop messagesPage actions.
+    when (addAction) {
+        AddAction.SelectContact -> SelectContactDialog(
+            repository = repository,
+            onPick = { c ->
+                addByEmail(c.address)
+            },
+            onDismiss = { addAction = null },
+        )
+        AddAction.AddByEmail -> InputDialog(
+            title = "添加好友",
+            placeholder = "输入对方邮箱地址",
+            confirmLabel = "添加",
+            keyboardType = KeyboardType.Email,
+            onConfirm = { addByEmail(it) },
+            onDismiss = { addAction = null },
+        )
+        AddAction.AddByLink -> InputDialog(
+            title = "添加好友",
+            placeholder = "粘贴邮箱 / peyt:// 邀请链接 / 链接",
+            confirmLabel = "加入",
+            onConfirm = { addByLink(it) },
+            onDismiss = { addAction = null },
+        )
+        AddAction.NewGroup -> InputDialog(
+            title = "创建群",
+            placeholder = "输入群名称",
+            confirmLabel = "创建",
+            onConfirm = { addGroup(it) },
+            onDismiss = { addAction = null },
+        )
+        AddAction.ShareInvite -> ShareInviteDialog(
+            repository = repository,
+            onDismiss = { addAction = null },
+        )
+        null -> {}
+    }
 }
 
 @Composable
