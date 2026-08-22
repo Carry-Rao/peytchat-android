@@ -31,8 +31,7 @@ include(
     ":patch:data",
     ":patch:notification",
     ":feature:shell",
-    ":feature:login",
-    ":feature:chat"
+    ":feature:login"
 )
 
 // :core/:data/:theme/:patch-api 源码放在 libs/ 下。
