@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PEYT Chat</string>
+    <string name="notif_service_title">PEYT Chat 正在接收消息</string>
+    <string name="notif_service_text">保持运行以接收新消息通知</string>
 </resources>
