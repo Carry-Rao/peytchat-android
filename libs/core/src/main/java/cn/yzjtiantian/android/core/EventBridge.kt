@@ -63,6 +63,9 @@ class EventBridge(
         thread = null
     }
 
+    /** 事件消费线程是否存活（诊断用：true=事件循环在跑）。 */
+    fun isThreadAlive(): Boolean = thread?.isAlive == true
+
     private fun loop() {
         while (running.get() && !Thread.currentThread().isInterrupted) {
             val batch: Any? = try {
@@ -88,8 +91,12 @@ class EventBridge(
                 val dcEvent = DcEvent(kind = kind, contextId = contextId, payload = event)
                 android.util.Log.d("PEYT", "[event] ctx=$contextId kind=$kind payload=${event}")
 
-                // ✅ 处理热更新事件
-                handleHotUpdateEvent(dcEvent)
+                // ✅ 处理热更新事件（必须兜底：异常逃逸会杀死事件线程，导致整个事件循环停摆）
+                try {
+                    handleHotUpdateEvent(dcEvent)
+                } catch (e: Exception) {
+                    android.util.Log.w("EventBridge", "hot-update handler failed for $kind", e)
+                }
 
                 for (l in listeners) {
                     try {

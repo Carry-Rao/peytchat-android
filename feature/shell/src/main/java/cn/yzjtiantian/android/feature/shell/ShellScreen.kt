@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -46,15 +47,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import cn.yzjtiantian.android.core.AccountManager
+import cn.yzjtiantian.android.core.MessageNotifications
 import cn.yzjtiantian.android.core.ModuleManager
+import cn.yzjtiantian.android.core.NotificationGate
 import cn.yzjtiantian.android.data.dto.ChannelDto
 import cn.yzjtiantian.android.data.dto.WorkspaceDto
 import cn.yzjtiantian.android.data.repository.PeytRepository
+import cn.yzjtiantian.android.feature.shell.NotificationStatusDialog
 import cn.yzjtiantian.android.patchapi.ChatUiProvider
 import cn.yzjtiantian.android.ui.theme.AppThemeMode
 import cn.yzjtiantian.android.ui.theme.TdesignIcons
@@ -140,8 +145,33 @@ fun ShellScreen(
         openDirectChat = DirectChat(chatId, name)
     }
 
-    /** 处理深链(`peytchat://` 等)：建单聊/securejoin 后直接跳到会话。 */
+    /** 打开指定 chatId 的会话：优先 workspace 频道，否则按直接消息打开。 */
+    fun openChatById(chatId: Long) {
+        scope.launch {
+            val channel = withContext(Dispatchers.IO) {
+                runCatching { repository.findChannelByChatId(chatId) }.getOrNull()
+            }
+            if (channel != null) {
+                openChannel = channel
+            } else {
+                val name = withContext(Dispatchers.IO) {
+                    repository.getChatName(chatId).ifBlank { "新会话" }
+                }
+                openDirectChatById(chatId, name)
+            }
+        }
+    }
+
+    /** 处理深链(`peytchat://` 等)：`peytchat://chat/<id>` 直接打开会话，其余建单聊/securejoin 后跳转。 */
     fun openDeepLink(raw: String) {
+        val chatPrefix = "peytchat://chat/"
+        if (raw.startsWith(chatPrefix)) {
+            val id = raw.substring(chatPrefix.length).toLongOrNull()
+            if (id != null) {
+                openChatById(id)
+                return
+            }
+        }
         scope.launch {
             val chatId = withContext(Dispatchers.IO) {
                 runCatching { repository.addFriend(raw) }
@@ -527,10 +557,25 @@ private fun ChannelScreen(
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var showDeleteConfirm by remember { mutableStateOf(false) }
     // 直接聊天（好友）由 ShellScreen 包装成 id=-1 的 ChannelDto
     val isDirectChat = channel.id == -1L
     val deleteLabel = if (isDirectChat) "好友" else "群组"
+
+    // 通知门控：打开会话时通知服务不再为该会话弹通知，并标记已读、清掉该会话通知。
+    LaunchedEffect(channel.chatId) {
+        NotificationGate.activeChatId = channel.chatId
+        runCatching { repository.markChatNoticed(channel.chatId) }
+        MessageNotifications.cancelForChat(context, channel.chatId)
+    }
+    DisposableEffect(channel.chatId) {
+        onDispose {
+            if (NotificationGate.activeChatId == channel.chatId) {
+                NotificationGate.activeChatId = -1L
+            }
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Surface(
@@ -771,6 +816,7 @@ private fun SettingsPage(
 ) {
     var showThemeDialog by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
+    var showNotificationDialog by remember { mutableStateOf(false) }
     val currentTheme by ThemeManager.themeMode.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -883,6 +929,38 @@ private fun SettingsPage(
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
 
+                // 消息通知行（诊断：开关状态 / 测试通知 / 最近日志）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showNotificationDialog = true }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        TdesignIcons.MessageCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "消息通知",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        TdesignIcons.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Divider(
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+
                 // 退出登录行
 //                Row(
 //                    modifier = Modifier
@@ -923,6 +1001,13 @@ private fun SettingsPage(
     if (showUpdateDialog) {
         UpdateDialog(
             onDismiss = { showUpdateDialog = false }
+        )
+    }
+
+    // 消息通知诊断对话框
+    if (showNotificationDialog) {
+        NotificationStatusDialog(
+            onDismiss = { showNotificationDialog = false }
         )
     }
 }
