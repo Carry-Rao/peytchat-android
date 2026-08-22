@@ -1,11 +1,14 @@
 package cn.yzjtiantian.android.ui.shell
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -33,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cn.yzjtiantian.android.data.dto.ChannelDto
@@ -40,6 +44,8 @@ import cn.yzjtiantian.android.data.dto.ChatMessageDto
 import cn.yzjtiantian.android.data.repository.PeytRepository
 import cn.yzjtiantian.android.ui.theme.iMessageBubbleSelf
 import cn.yzjtiantian.android.ui.theme.iMessageBlue
+import android.os.Handler
+import android.os.Looper
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -61,6 +67,7 @@ fun ChatScreen(
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     suspend fun load() {
         withContext(Dispatchers.IO) {
@@ -78,7 +85,11 @@ fun ChatScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding(),
+    ) {
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -86,7 +97,7 @@ fun ChatScreen(
                 .fillMaxWidth(),
             reverseLayout = true,
         ) {
-            items(messages, key = { it.msgId }) { msg ->
+            items(messages.asReversed(), key = { it.msgId }) { msg ->
                 if (msg.isInfo) {
                     InfoLine(text = msg.text)
                 } else {
@@ -118,7 +129,19 @@ fun ChatScreen(
                         if (text.isNotEmpty()) {
                             draft = ""
                             scope.launch(Dispatchers.IO) {
-                                runCatching { repository.sendMessage(channel.chatId, text) }
+                                try {
+                                    repository.sendMessage(channel.chatId, text)
+                                    android.util.Log.d("PEYT", "[send] ok chatId=${channel.chatId} text=$text")
+                                } catch (e: Exception) {
+                                    android.util.Log.e("PEYT", "[send] FAILED chatId=${channel.chatId} text=$text", e)
+                                    Handler(Looper.getMainLooper()).post {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "发送失败: ${e.message}",
+                                            android.widget.Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                }
                             }
                             scope.launch { load() }
                         }
@@ -171,21 +194,28 @@ private fun MessageBubble(msg: ChatMessageDto) {
             modifier = Modifier.widthIn(max = 300.dp),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                Text(
-                    text = msg.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = textColor,
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = formatTime(msg.timestamp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isOut) Color.White.copy(alpha = 0.7f)
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column {
+                    Text(
+                        text = msg.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = textColor,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (isOut) Arrangement.End else Arrangement.Start,
+                    ) {
+                        Text(
+                            text = formatTime(msg.timestamp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isOut) Color.White.copy(alpha = 0.7f)
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
     }

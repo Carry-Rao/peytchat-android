@@ -163,6 +163,32 @@ pub extern "system" fn Java_cn_yzjtiantian_android_core_PeytBridge_nativeJsonrpc
         .unwrap_or(std::ptr::null_mut())
 }
 
+/// 构建 PEYT 信封(复用 rv envelope.rs `build_envelope`),返回信封 JSON。
+/// 失败(参数非法)返回空字符串。
+#[no_mangle]
+pub extern "system" fn Java_cn_yzjtiantian_android_core_PeytBridge_nativeBuildEnvelope(
+    mut env: JNIEnv,
+    _class: JClass,
+    type_: JString,
+    payload: JString,
+) -> jstring {
+    let get = |env: &mut JNIEnv, s: &JString| {
+        env.get_string(s)
+            .ok()
+            .map(|v| v.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let type_str = get(&mut env, &type_);
+    let payload_str = get(&mut env, &payload);
+    let payload_value = serde_json::from_str(&payload_str).unwrap_or(serde_json::Value::Null);
+    let out = peyt_envelope::build_envelope(&type_str, payload_value)
+        .unwrap_or_default();
+    env.new_string(&out)
+        .ok()
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
 /// Send an asynchronous JSON-RPC request (fire-and-forget).
 #[no_mangle]
 pub extern "system" fn Java_cn_yzjtiantian_android_core_PeytBridge_nativeJsonrpcRequest(

@@ -24,4 +24,7 @@ object PeytBridge {
     external fun nativePluginsList(): String
     external fun nativePluginsToggle(name: String, enabled: Boolean): String
     external fun nativePluginsGetJs(name: String): String
+
+    /** 构建 PEYT 信封 JSON(复用 rv envelope.rs build_envelope)。 */
+    external fun nativeBuildEnvelope(type: String, payload: String): String
 }
