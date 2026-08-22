@@ -51,13 +51,18 @@ fn char_ptr_to_string(ptr: *mut c_char) -> String {
     result
 }
 
-fn with_rpc<F, T>(f: F) -> Option<T>
-where
-    F: FnOnce(&RpcHandle) -> T,
-{
-    let guard = RPC.lock().ok()?;
-    let handle = guard.as_ref()?;
-    Some(f(handle))
+/// Copy the raw RPC pointers out under a short lock.
+///
+/// The handle is installed once by `nativeInit` and only removed by
+/// `nativeUnref` at teardown, so grabbing the pointers briefly and calling
+/// the blocking FFI *without* holding the mutex is safe. Holding the mutex
+/// across `dc_jsonrpc_blocking_call` would deadlock: `get_next_event_batch`
+/// blocks until an event arrives, stalling every concurrent RPC call.
+fn rpc_pointers() -> Option<(*const AccountsTag, *mut RpcInstanceTag)> {
+    RPC.lock()
+        .ok()?
+        .as_ref()
+        .map(|h| (h.accounts, h.jsonrpc))
 }
 
 /// Initialize the deltachat accounts manager and JSON-RPC session.
@@ -142,14 +147,15 @@ pub extern "system" fn Java_cn_yzjtiantian_android_core_PeytBridge_nativeJsonrpc
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let response = with_rpc(|handle| {
-        let Some(input) = c_str_bytes(&request_str) else {
-            return String::new();
-        };
-        let ptr = unsafe { dc_jsonrpc_blocking_call(handle.jsonrpc, input.as_ptr()) };
-        char_ptr_to_string(ptr)
-    })
-    .unwrap_or_default();
+    let response = rpc_pointers()
+        .and_then(|(_accounts, jsonrpc)| {
+            let Some(input) = c_str_bytes(&request_str) else {
+                return None;
+            };
+            let ptr = unsafe { dc_jsonrpc_blocking_call(jsonrpc, input.as_ptr()) };
+            Some(char_ptr_to_string(ptr))
+        })
+        .unwrap_or_default();
 
     env.new_string(&response)
         .ok()
@@ -170,11 +176,7 @@ pub extern "system" fn Java_cn_yzjtiantian_android_core_PeytBridge_nativeJsonrpc
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let handle = RPC
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().map(|h| (h.accounts, h.jsonrpc)));
-    if let Some((_accounts, jsonrpc)) = handle {
+    if let Some((_accounts, jsonrpc)) = rpc_pointers() {
         if let Some(input) = c_str_bytes(&request_str) {
             unsafe { dc_jsonrpc_request(jsonrpc, input.as_ptr()) };
         }
@@ -187,11 +189,12 @@ pub extern "system" fn Java_cn_yzjtiantian_android_core_PeytBridge_nativeJsonrpc
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    let response = with_rpc(|handle| {
-        let ptr = unsafe { dc_jsonrpc_next_response(handle.jsonrpc) };
-        char_ptr_to_string(ptr)
-    })
-    .unwrap_or_default();
+    let response = rpc_pointers()
+        .map(|(_accounts, jsonrpc)| {
+            let ptr = unsafe { dc_jsonrpc_next_response(jsonrpc) };
+            char_ptr_to_string(ptr)
+        })
+        .unwrap_or_default();
 
     env.new_string(&response)
         .ok()
