@@ -6,20 +6,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -48,9 +42,18 @@ import cn.yzjtiantian.android.data.dto.ChannelDto
 import cn.yzjtiantian.android.data.dto.WorkspaceDto
 import cn.yzjtiantian.android.data.repository.PeytRepository
 import cn.yzjtiantian.android.ui.theme.TdesignIcons
+import cn.yzjtiantian.android.ui.theme.ThemeManager
+import cn.yzjtiantian.android.ui.theme.ThemeSelectionDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material3.Divider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.tooling.preview.Preview
+import cn.yzjtiantian.android.ui.theme.AppThemeMode
+import cn.yzjtiantian.android.ui.theme.AppThemeMode.*
+
 
 private enum class Tab(val label: String) {
     Messages("消息"),
@@ -347,6 +350,9 @@ private fun ChannelList(
 private fun SettingsPage(
     onLoggedOut: () -> Unit,
 ) {
+    var showThemeDialog by remember { mutableStateOf(false) }
+    val currentTheme by ThemeManager.themeMode.collectAsState()
+
     Column(modifier = Modifier.fillMaxSize()) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
@@ -354,23 +360,83 @@ private fun SettingsPage(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
-                .clickable { onLoggedOut() },
         ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    TdesignIcons.LogOut,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
+            Column {
+                // 主题切换行
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showThemeDialog = true }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        TdesignIcons.Theme,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "主题",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    // 显示当前主题
+                    Text(
+                        text = when (currentTheme) {
+                            AppThemeMode.LIGHT -> "浅色"
+                            AppThemeMode.DARK -> "深色"
+                            AppThemeMode.SYSTEM -> "跟随系统"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Icon(
+                        TdesignIcons.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Divider(
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
-                Text(
-                    text = "退出登录",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(start = 12.dp),
-                )
+
+                // 退出登录行
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onLoggedOut() }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        TdesignIcons.LogOut,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                    Text(
+                        text = "退出登录",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 12.dp),
+                    )
+                }
             }
         }
+    }
+
+    // 主题切换对话框
+    if (showThemeDialog) {
+        ThemeSelectionDialog(
+            onDismiss = { showThemeDialog = false },
+            currentTheme = currentTheme,
+            onThemeSelected = { newTheme ->
+                ThemeManager.setTheme(newTheme)
+                showThemeDialog = false
+            }
+        )
     }
 }
