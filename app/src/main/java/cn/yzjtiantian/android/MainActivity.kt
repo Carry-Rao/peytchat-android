@@ -17,6 +17,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -35,6 +36,7 @@ import kotlinx.coroutines.withContext
 import cn.yzjtiantian.android.ui.theme.DynamicPeytchatTheme
 import cn.yzjtiantian.android.ui.theme.ThemeManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 
 class MainActivity : ComponentActivity() {
@@ -82,9 +84,17 @@ fun AppRoot(
     deepLink: String?,
     onDeepLinkConsumed: () -> Unit,
 ) {
-    val context = LocalContext.current
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
-    val accountManager = remember(bridge) { AccountManager(Rpc(bridge)) }
+    val context = LocalContext.current
+    val rpc = remember(bridge) { Rpc(bridge) }
+    val accountManager = remember(bridge) { AccountManager(rpc) }
+    val eventBridge = remember { EventBridge(rpc, context) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            eventBridge.start()
+        }
+    }
 
     // One-time init on the IO dispatcher.
     LaunchedEffect(Unit) {
@@ -122,7 +132,14 @@ fun AppRoot(
         true -> {
             val rpc = remember(bridge) { Rpc(bridge) }
             val accountManager = remember(bridge) { AccountManager(rpc) }
-            val repository = remember(bridge) { PeytRepository(rpc, AppDatabase.get(context)) }
+            val repository = remember(bridge) {
+                PeytRepository(
+                    rpc = rpc,
+                    db = AppDatabase.get(context),
+                    tempDir = java.io.File(context.cacheDir, "media"),
+                )
+            }
+            val scope = rememberCoroutineScope()
 
             // Pick the configured account and drive the event loop.
             LaunchedEffect(Unit) {
@@ -138,6 +155,23 @@ fun AppRoot(
                             android.util.Log.d("PEYT", "[startup] account=$id started IO, force_encryption disabled")
                             val bridgeEvents = EventBridge(rpc)
                             bridgeEvents.start()
+                            // 收到消息 → 解析 PEYT 信封:card.* 同步本地卡片, project.invite 自动加入频道。
+                            // 副作用以 (from_id, envelope.id) 幂等去重(见 repository.handleIncomingEnvelope)。
+                            bridgeEvents.addListener { event ->
+                                if (event.kind == "IncomingMsg") {
+                                    val msgId = event.payload.optLong("msg_id", 0)
+                                    if (msgId > 0) {
+                                        scope.launch(Dispatchers.IO) {
+                                            runCatching {
+                                                val msg = repository.getChatMessage(msgId)
+                                                repository.handleIncomingEnvelope(msgId, msg.fromId, msg.text)
+                                            }.onFailure { e ->
+                                                android.util.Log.w("PEYT", "[envelope] IncomingMsg $msgId handle failed", e)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         } else {
                             android.util.Log.w("PEYT", "[startup] no configured account found")
                         }

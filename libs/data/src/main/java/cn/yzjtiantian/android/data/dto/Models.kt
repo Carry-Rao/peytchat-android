@@ -111,6 +111,10 @@ data class CoreMessageDto(
     val text: String,
     val timestamp: Long,
     val viewType: String,
+    val fileName: String? = null,
+    val fileBytes: Long = 0,
+    val filePath: String? = null,
+    val fileMime: String? = null,
 )
 
 /** A rendered chat message for the UI. */
@@ -122,4 +126,8 @@ data class ChatMessageDto(
     val timestamp: Long,
     val isOut: Boolean,
     val isInfo: Boolean,
+    val viewType: String = "Text",
+    val fileName: String? = null,
+    val fileBytes: Long = 0,
+    val filePath: String? = null,
 )

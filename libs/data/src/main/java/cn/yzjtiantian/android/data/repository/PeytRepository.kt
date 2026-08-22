@@ -24,9 +24,16 @@ import cn.yzjtiantian.android.data.entity.InboxEventEntity
 import cn.yzjtiantian.android.data.entity.PinEntity
 import cn.yzjtiantian.android.data.entity.RoleEntity
 import cn.yzjtiantian.android.data.entity.WorkspaceEntity
+import cn.yzjtiantian.android.data.envelope.Envelope
+import cn.yzjtiantian.android.data.envelope.cardEnvelopeAction
+import cn.yzjtiantian.android.data.envelope.isCardEnvelope
+import cn.yzjtiantian.android.data.envelope.resolveEnvelopeSummary
+import cn.yzjtiantian.android.data.envelope.resolveMessageText
+import cn.yzjtiantian.android.data.envelope.tryParseEnvelope
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Base64
+import java.util.concurrent.ConcurrentHashMap
 
 private const val PEYT_STUDIO_NAME = "PEYT Studio"
 private const val SELF_CONTACT_ID = 1L
@@ -41,6 +48,7 @@ private const val SELF_CONTACT_ID = 1L
 class PeytRepository(
     private val rpc: Rpc,
     private val db: AppDatabase,
+    private val tempDir: java.io.File,
 ) {
     private fun accountId(): Long {
         val id = Session.currentAccountId
@@ -70,12 +78,19 @@ class PeytRepository(
     }
 
     /**
+     * 组装并发送信封消息(复用 Rust `peyt-envelope`, 与桌面端 envelope.rs 同构)。
+     */
+    private fun sendEnvelope(chatId: Long, type: String, payload: JSONObject): Long =
+        sendText(chatId, PeytBridge.nativeBuildEnvelope(type, payload.toString()))
+
+    /**
      * Public text-send used by the chat UI.
      *
      * 按 PEYT 信封协议包装正文:发送端(写)复用 Rust `peyt-envelope` 的
      * `build_envelope`(与桌面端 envelope.rs 同构),产出
      * `{"type":"text","id":"<uuid>","payload":{"text":"..."}}`。
-     * 内部 `[CARD]`/`[PEYT_INVITE]` 仍走 [sendText] 前缀协议。
+     * 内部 `[CARD]`/`[PEYT_INVITE]` 已迁移为 `card.*`/`project.invite` 信封
+     * (见 [createCard]/[ensurePeytStudio])。
      * 接收端(读)解析见 [resolveEnvelopeText],为客户端自实现。
      */
     suspend fun sendMessage(chatId: Long, text: String): Long {
@@ -85,23 +100,107 @@ class PeytRepository(
     }
 
     /**
-     * 解析 PEYT 信封(镜像桌面端 `tryParseEnvelope` + `envelopeText`):
-     * 若正文是 `{"type":"text","id":...,"payload":{"text":...}}`,返回 `payload.text`;
-     * 否则原样返回。内部 `[CARD]`/`[PEYT_INVITE]` 消息不含信封,走原样分支。
+     * 发送附件/文档(对齐桌面端 `send_attachment` + media 信封):
+     * - 二进制写入临时文件, 按 MIME 推断 viewtype(Image/Gif/Audio/Video/File);
+     * - 正文写 `{"type":"media",...,"payload":{"media_type","mime","name","size","text"}}`;
+     * - 经 `send_msg` MessageData 挂 core 附件(接收端见 [ChatMessageDto] 附件字段)。
+     */
+    suspend fun sendAttachment(chatId: Long, bytes: ByteArray, filename: String, mime: String): Long {
+        val dir = tempDir.takeIf { it.exists() || it.mkdirs() } ?: throw RpcException("no temp dir")
+        val file = java.io.File(dir, filename)
+        file.writeBytes(bytes)
+        val viewType = viewTypeForMime(mime)
+        val mediaType = when (viewType) {
+            "Image", "Gif" -> "image"
+            "Audio" -> "audio"
+            "Video" -> "video"
+            "Voice" -> "voice"
+            else -> "file"
+        }
+        val payload = JSONObject()
+            .put("media_type", mediaType)
+            .put("mime", mime)
+            .put("name", filename)
+            .put("size", bytes.size)
+            .put("text", filename)
+        val envelope = PeytBridge.nativeBuildEnvelope("media", payload.toString())
+        val data = JSONObject()
+            .put("text", envelope)
+            .put("viewtype", viewType)
+            .put("file", file.absolutePath)
+            .put("filename", filename)
+        val result = rpc.callRaw(
+            "send_msg",
+            JSONArray().put(accountId()).put(chatId).put(data),
+        ) as? Number ?: throw RpcException("send_msg returned no id")
+        return result.toLong()
+    }
+
+    /** 按 MIME 推断 Delta viewtype(对齐桌面端 `viewtype_for_mime`)。 */
+    private fun viewTypeForMime(mime: String): String {
+        val m = mime.lowercase()
+        return when {
+            m.startsWith("image/") -> if (m.endsWith("gif")) "Gif" else "Image"
+            m.startsWith("audio/") -> "Audio"
+            m.startsWith("video/") -> "Video"
+            else -> "File"
+        }
+    }
+
+    /** 消息(id, 信封 id) → 已处理标记, 用于跨 IncomingMsg/历史路径的副作用幂等(镜像 rv 规范 §5.2)。 */
+    private val processedEnvelopeIds = ConcurrentHashMap<Pair<Long, String>, Boolean>()
+
+    /**
+     * 解析 PEYT 信封(镜像桌面端 `envelope.ts`):
+     * - 普通信封(text/reply/media) → `payload.text`;
+     * - 业务信封(card.* / project.invite) → 可读摘要(卡片标题/邀请提示);
+     * - 结构不合法 / 未知 type → 原样返回。
      */
     private fun resolveEnvelopeText(raw: String): String {
-        if (raw.isEmpty() || raw[0] != '{') return raw
+        return resolveEnvelopeSummary(raw) ?: resolveMessageText(raw)
+    }
+
+    /**
+     * 处理收到的一条消息:若为业务信封(card.* / project.invite),执行本地副作用
+     * (卡片同步 / 频道加入),并以 (fromId, envelope.id) 幂等去重;返回是否已消费。
+     * 普通信封/普通文本返回 false,不拦截聊天流展示。
+     */
+    suspend fun handleIncomingEnvelope(msgId: Long, fromId: Long, text: String): Boolean {
+        val env = tryParseEnvelope(text) ?: return false
+        if (!isCardEnvelope(env) && env.type != "project.invite") return false
+        val key = fromId to env.id
+        if (processedEnvelopeIds.putIfAbsent(key, true) != null) return true
         return try {
-            val obj = JSONObject(raw)
-            val payload = obj.optJSONObject("payload")
-            val text = payload?.optString("text")
-            if (!obj.isNull("type") && !obj.isNull("id") && payload != null && text != null) {
-                text
-            } else {
-                raw
+            when {
+                isCardEnvelope(env) -> {
+                    upsertCardFromMsg(msgId, cardEnvelopeAction(env), env.payload)
+                    true
+                }
+                env.type == "project.invite" -> {
+                    handleProjectInvite(msgId, env)
+                    true
+                }
+                else -> false
             }
-        } catch (_: Exception) {
-            raw
+        } catch (e: Exception) {
+            processedEnvelopeIds.remove(key)
+            android.util.Log.w("PEYT", "[envelope] handle ${env.type} failed", e)
+            true
+        }
+    }
+
+    private suspend fun handleProjectInvite(msgId: Long, env: Envelope) {
+        val payload = env.payload
+        val generalQr = payload.optString("general_qr", "").takeIf { it.isNotEmpty() }
+        val workQr = payload.optString("work_qr", "").takeIf { it.isNotEmpty() }
+        if (generalQr == null && workQr == null) return
+        val msg = try { getMessage(msgId) } catch (_: Exception) { return }
+        val workspaceId = db.channelDao().getWorkspaceId(msg.chatId) ?: return
+        if (generalQr != null) {
+            joinPeytChannel(workspaceId, generalQr, "闲聊", "General", null)
+        }
+        if (workQr != null) {
+            joinPeytChannel(workspaceId, workQr, "工作", "General", "card")
         }
     }
 
@@ -144,6 +243,10 @@ class PeytRepository(
                     timestamp = m.timestamp,
                     isOut = m.fromId == SELF_CONTACT_ID,
                     isInfo = isInfo,
+                    viewType = m.viewType,
+                    fileName = m.fileName,
+                    fileBytes = m.fileBytes,
+                    filePath = m.filePath,
                 )
             } catch (_: Exception) {
                 null
@@ -160,6 +263,10 @@ class PeytRepository(
             text = obj.optString("text", ""),
             timestamp = obj.optLong("timestamp"),
             viewType = obj.optString("viewType", "Text"),
+            fileName = obj.optStringOrNull("fileName"),
+            fileBytes = obj.optLong("fileBytes", 0),
+            filePath = obj.optStringOrNull("file"),
+            fileMime = obj.optStringOrNull("fileMime"),
         )
     }
 
@@ -389,7 +496,6 @@ class PeytRepository(
         val assigneeAddr = assigneeContactId?.let { contactAddr(it) } ?: ""
         val createdByAddr = contactAddr(SELF_CONTACT_ID)
         val cardJson = JSONObject()
-            .put("action", "create")
             .put("id", cardId)
             .put("type", type)
             .put("title", title)
@@ -399,8 +505,9 @@ class PeytRepository(
             .put("description", description ?: JSONObject.NULL)
             .put("created_by_addr", createdByAddr)
             .put("created_at", now)
-            .toString()
-        val sentMsgId = sendText(chatId, "[CARD]$cardJson")
+            .put("updated_at", now)
+            .put("position", 0)
+        val sentMsgId = sendEnvelope(chatId, "card.create", cardJson)
         db.cardDao().setMsgId(cardId, sentMsgId)
         logActivity(workspaceId, chatId, "card_create", "card", cardId, title)
         return db.cardDao().getById(cardId)!!.toDto()
@@ -424,7 +531,6 @@ class PeytRepository(
         val row = dao.getById(cardId) ?: throw RpcException("card not found")
         val assigneeAddr = row.assigneeContactId?.let { contactAddr(it) } ?: ""
         val cardJson = JSONObject()
-            .put("action", "update")
             .put("id", cardId)
             .put("type", row.type)
             .put("title", row.title)
@@ -433,8 +539,9 @@ class PeytRepository(
             .put("due_date", row.dueDate ?: JSONObject.NULL)
             .put("description", row.description ?: JSONObject.NULL)
             .put("created_at", row.createdAt)
-            .toString()
-        sendText(row.channelChatId, "[CARD]$cardJson")
+            .put("updated_at", now)
+            .put("position", 0)
+        sendEnvelope(row.channelChatId, "card.update", cardJson)
         val payload = JSONObject()
             .put("title", row.title)
             .put("status", row.status)
@@ -451,12 +558,10 @@ class PeytRepository(
         db.cardDao().delete(cardId)
         if (row != null) {
             val cardJson = JSONObject()
-                .put("action", "delete")
                 .put("id", cardId)
                 .put("title", row.title)
                 .put("created_at", row.createdAt)
-                .toString()
-            sendText(row.channelChatId, "[CARD]$cardJson")
+            sendEnvelope(row.channelChatId, "card.delete", cardJson)
             logActivity(row.workspaceId, row.channelChatId, "card_delete", "card", cardId, null)
         }
     }
@@ -468,17 +573,11 @@ class PeytRepository(
         db.cardDao().getById(cardId)?.toDto()
 
     /**
-     * Driven by `[CARD]` sync messages. Parses the JSON payload and
-     * upserts/updates/deletes a card, deduplicating by
-     * (channel_chat_id, title, created_at within 60s).
+     * Driven by `card.create`/`card.update`/`card.delete` 信封消息。按信封类型
+     * 动作 upserts/updates/deletes 卡片, 按 (channel_chat_id, title, created_at
+     * 在 60s 内) 去重。
      */
-    suspend fun upsertCardFromMsg(msgId: Long, cardJson: String): CardDto? {
-        val payload = try {
-            JSONObject(cardJson)
-        } catch (_: Exception) {
-            throw RpcException("invalid card json")
-        }
-        val action = payload.optString("action", "create")
+    suspend fun upsertCardFromMsg(msgId: Long, action: String, payload: JSONObject): CardDto? {
         val title = payload.optString("title", "")
         val createdAt = payload.optLong("created_at", 0)
 
@@ -558,7 +657,6 @@ class PeytRepository(
         ))
         val createdByAddr = contactAddr(SELF_CONTACT_ID)
         val cardJson = JSONObject()
-            .put("action", "create")
             .put("id", cardId)
             .put("type", type)
             .put("title", resolvedTitle)
@@ -568,9 +666,10 @@ class PeytRepository(
             .put("description", JSONObject.NULL)
             .put("created_by_addr", createdByAddr)
             .put("created_at", now)
+            .put("updated_at", now)
+            .put("position", 0)
             .put("source_msg_id", msgId)
-            .toString()
-        val sentMsgId = sendText(chatId, "[CARD]$cardJson")
+        val sentMsgId = sendEnvelope(chatId, "card.create", cardJson)
         db.cardDao().setMsgId(cardId, sentMsgId)
         logActivity(workspaceId, chatId, "message_to_card", "card", cardId, null)
         return db.cardDao().getById(cardId)!!.toDto()
@@ -742,9 +841,12 @@ class PeytRepository(
         db.roleDao().insert(RoleEntity(workspaceId = wsId, name = "core", color = null))
         val welcome = "👋 欢迎来到 PEYT Studio\n\n这是团队的默认协作空间。\n• 公告频道: 团队通知发布\n• 闲聊频道: 日常交流\n• 工作频道: 任务看板协作\n\n点击右上角头像可切换主题,左下角 + 可创建更多 workspace。"
         sendText(masterChatId, welcome)
-        val generalQr = getSecureJoinQr(generalChat).replace("\"", "\\\"")
-        val workQr = getSecureJoinQr(workChat).replace("\"", "\\\"")
-        sendText(masterChatId, "[PEYT_INVITE]{\"general_qr\":\"$generalQr\",\"work_qr\":\"$workQr\"}")
+        val generalQr = getSecureJoinQr(generalChat)
+        val workQr = getSecureJoinQr(workChat)
+        val invitePayload = JSONObject()
+            .put("general_qr", generalQr)
+            .put("work_qr", workQr)
+        sendEnvelope(masterChatId, "project.invite", invitePayload)
         val inviteQr = getSecureJoinQr(masterChatId)
         return PeytStudioDto(
             workspace = db.workspaceDao().findByMasterChat(masterChatId)!!.toDto(),
