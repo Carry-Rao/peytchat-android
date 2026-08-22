@@ -84,6 +84,7 @@ fun AppRoot(
 ) {
     val context = LocalContext.current
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
+    val accountManager = remember(bridge) { AccountManager(Rpc(bridge)) }
 
     // One-time init on the IO dispatcher.
     LaunchedEffect(Unit) {
@@ -144,8 +145,10 @@ fun AppRoot(
                 }
             }
 
+            // ✅ 传入 accountManager
             ShellScreen(
                 repository = repository,
+                accountManager = accountManager,  // ✅ 新增参数
                 onLoggedOut = {
                     loggedIn = false
                 },
