@@ -89,9 +89,9 @@ private data class DirectChat(val chatId: Long, val name: String)
 fun ShellScreen(
     repository: PeytRepository,
     onLoggedOut: () -> Unit,
-    accountManager: AccountManager,  // 你的功能
-    deepLink: String?,              // main 的功能
-    onDeepLinkConsumed: () -> Unit, // main 的功能
+    accountManager: AccountManager,
+    deepLink: String?,
+    onDeepLinkConsumed: () -> Unit,
 ) {
     var workspaces by remember { mutableStateOf<List<WorkspaceDto>>(emptyList()) }
     var currentWorkspace by remember { mutableStateOf<WorkspaceDto?>(null) }
@@ -103,7 +103,7 @@ fun ShellScreen(
     var openDirectChat by remember { mutableStateOf<DirectChat?>(null) }
     var expandMenu by remember { mutableStateOf(false) }
     var addAction by remember { mutableStateOf<AddAction?>(null) }
-    var showAccountPage by remember { mutableStateOf(false) }  // 控制账号页面显示
+    var showAccountPage by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     fun refreshChannels(ws: WorkspaceDto) {
@@ -386,6 +386,7 @@ fun ShellScreen(
                         AccountPage(
                             onBack = { showAccountPage = false },
                             accountManager = accountManager,
+                            onLoggedOut = onLoggedOut,
                         )
                     }
                     else -> {
@@ -498,6 +499,7 @@ private fun BottomNavBar(
 private fun AccountPage(
     onBack: () -> Unit,
     accountManager: AccountManager,
+    onLoggedOut: () -> Unit,
 ) {
     val account = remember {
         accountManager.getAllAccounts().firstOrNull { it.configured }
@@ -507,6 +509,7 @@ private fun AccountPage(
         paddingValues = PaddingValues(0.dp),
         accountManager = accountManager,
         accountId = account?.id,
+        onLoggedOut = onLoggedOut,
     )
 }
 
@@ -795,25 +798,25 @@ private fun SettingsPage(
                 )
 
                 // 退出登录行
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onLoggedOut() }
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        TdesignIcons.LogOut,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                    )
-                    Text(
-                        text = "退出登录",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(start = 12.dp),
-                    )
-                }
+//                Row(
+//                    modifier = Modifier
+//                        .fillMaxWidth()
+//                        .clickable { onLoggedOut() }
+//                        .padding(16.dp),
+//                    verticalAlignment = Alignment.CenterVertically,
+//                ) {
+//                    Icon(
+//                        TdesignIcons.LogOut,
+//                        contentDescription = null,
+//                        tint = MaterialTheme.colorScheme.error,
+//                    )
+//                    Text(
+//                        text = "退出登录",
+//                        style = MaterialTheme.typography.bodyLarge,
+//                        color = MaterialTheme.colorScheme.error,
+//                        modifier = Modifier.padding(start = 12.dp),
+//                    )
+//                }
             }
         }
     }
