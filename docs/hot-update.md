@@ -228,24 +228,59 @@ val loader = ModuleManager.getModuleClassLoader("shell")
 val clazz = loader?.loadClass("cn.yzjtiantian.android.patch.ShellPatch")
 ```
 
+## 界面热更新（ChatUiProvider 扩展点）
+
+除「行为补丁」外，聊天界面也支持通过补丁整体替换（无需发版）。机制：
+
+1. **稳定契约** `libs/patch-api/.../patchapi/ChatUiProvider.kt`：
+   `@Composable fun ChatContent(repository: PeytRepository, channel: ChannelDto)`；
+2. **基座分发**：`ShellScreen` 打开频道时先查
+   `ModuleManager.getUiProvider("chat")`，注册了补丁就用补丁界面，否则回退内置 `ChatScreen`；
+3. **补丁注册**：补丁入口类 `ChatPatch.apply(Context)` 里调用
+   `ModuleManager.registerUiProvider("chat", ChatUiV2())` 完成注册（通用 Object 存储，
+   `:core` 不依赖具体契约）。
+
+补丁模块 `patch/chat` 就是一个可复制的模板（Kotlin + Compose，含打 dex 的
+`packagePatchDex` 任务）。改 chatUI 的操作流程：
+
+```bash
+# 1. 在 patch/chat 里改/新增 ChatUiProvider 实现（新类名，如 ChatUiV2）
+# 2. 构建补丁 dex（版本号在 patch/chat/build.gradle.kts 的 patchVersion 里递增）
+./gradlew :patch:chat:packagePatchDex
+# 3. 生成清单并上传（updates/chat_<version>.dex + update.json）
+OUT=updates/update.json ./scripts/gen-update-manifest.sh \
+    https://peyt.org/peytchat-android-update/ updates/chat_1.0.2.dex
+```
+
+要点：
+
+- 补丁实现类名必须是基座中不存在的新类（parent-first 下才能命中补丁 dex）；
+- 补丁实现可自由引用 `PeytRepository`/`ChannelDto`/compose/主题等基座类
+  （补丁类加载器的 parent 能看到基座全部类）；
+- `ChatUiProvider` 属稳定契约，签名发布后不要随意改；
+- 基座 UI 发版不影响已下发的 UI 补丁：新版基座启动时仍会检测并加载补丁界面。
+
 ## 已知限制（重要）
 
 Android 类加载是 **parent-first** 的：`DexClassLoader` 的 parent 是应用类加载器，
 若补丁类名与基座 APK 内已有类**完全同名**（例如补丁里也写
-`cn.yzjtiantian.android.ui.shell.ShellScreen`），解析到的会是基座版本，补丁不会生效。
+`cn.yzjtiantian.android.ui.shell.ChatScreen`），解析到的会是基座版本，补丁不会生效。
 
 因此：
 
-- 补丁**不要**试图覆盖基座已有类，改为提供新类（如上述入口类）并让业务代码
-  通过 `ModuleManager` 查询调用；
-- 若需要整体替换 Compose 界面（同名类覆盖），需要更重的方案（如 Tinker 式
+- 补丁**不要**试图覆盖基座已有类，改为提供新类（入口类 / `ChatUiProvider` 实现）
+  并让业务代码通过 `ModuleManager` 查询调用；
+- 若需要无扩展点的整体替换（同名类覆盖），需要更重的方案（如 Tinker 式
   classloader 替换、或 Google Play 的 Dynamic Feature Delivery + Play Core 按需下载）。
 
 ## 代码入口
 
 - `libs/core/.../core/HotUpdateManager.kt` — 清单/下载/校验/加载（含补丁入口类反射）
-- `libs/core/.../core/ModuleManager.kt` — 模块/补丁注册表（`LoadedPatch`）
+- `libs/core/.../core/ModuleManager.kt` — 模块/补丁/UI 提供者注册表（`LoadedPatch`）
 - `libs/core/.../core/EventBridge.kt` — 启动时加载待应用补丁 + 事件通道
+- `libs/patch-api/.../patchapi/ChatUiProvider.kt` — 聊天界面稳定契约
+- `feature/shell/.../ui/shell/ShellScreen.kt` — 聊天区补丁优先/基座回退分发
 - `feature/shell/.../ui/shell/UpdateDialog.kt` — 检查更新对话框（展示已加载补丁）
+- `patch/chat/` — chat 补丁模块（入口类 + UI 实现 + packagePatchDex 任务）
 - `feature/shell/.../ui/shell/ShellScreen.kt` — 设置页「检查更新」入口
 - `patch-sample/` — 可编译发布的补丁示例

@@ -48,9 +48,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import cn.yzjtiantian.android.core.AccountManager
+import cn.yzjtiantian.android.core.ModuleManager
 import cn.yzjtiantian.android.data.dto.ChannelDto
 import cn.yzjtiantian.android.data.dto.WorkspaceDto
 import cn.yzjtiantian.android.data.repository.PeytRepository
+import cn.yzjtiantian.android.patchapi.ChatUiProvider
 import cn.yzjtiantian.android.ui.theme.AppThemeMode
 import cn.yzjtiantian.android.ui.theme.TdesignIcons
 import cn.yzjtiantian.android.ui.theme.ThemeManager
@@ -551,7 +553,13 @@ private fun ChannelScreen(
         if (channel.spaceType == "card") {
             WorkScreen(repository = repository, channel = channel)
         } else {
-            ChatScreen(repository = repository, channel = channel)
+            // 热更新扩展点：补丁注册了 ChatUiProvider 就用补丁界面，否则回退内置 ChatScreen
+            val chatProvider = remember { ModuleManager.getUiProvider("chat") as? ChatUiProvider }
+            if (chatProvider != null) {
+                chatProvider.ChatContent(repository = repository, channel = channel)
+            } else {
+                ChatScreen(repository = repository, channel = channel)
+            }
         }
     }
 }
