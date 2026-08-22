@@ -11,6 +11,7 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
@@ -20,4 +21,19 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "peytchat"
-include(":app")
+
+include(
+    ":app",
+    ":core",
+    ":data",
+    ":theme",
+    ":feature:shell",
+    ":feature:login",
+    ":feature:chat"
+)
+
+// :core/:data/:theme 源码放在 libs/ 下。
+// 注意根目录 core/ 是 chatmail/core 的 Rust 子模块，不能作为 Gradle 工程参与构建。
+project(":core").projectDir = file("libs/core")
+project(":data").projectDir = file("libs/data")
+project(":theme").projectDir = file("libs/theme")
