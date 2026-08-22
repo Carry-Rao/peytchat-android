@@ -1,6 +1,8 @@
 package cn.yzjtiantian.android
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,6 +19,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.NavController
+import androidx.navigation.compose.rememberNavController
 import cn.yzjtiantian.android.core.AccountManager
 import cn.yzjtiantian.android.core.EventBridge
 import cn.yzjtiantian.android.core.PeytBridge
@@ -39,6 +43,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val themeMode by ThemeManager.themeMode.collectAsState()
+            val navController = rememberNavController()
 
             DynamicPeytchatTheme(
                 themeMode = themeMode
@@ -47,7 +52,10 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppRoot(bridge = PeytBridge)
+                    AppRoot(
+                        bridge = PeytBridge,
+                        navController = navController
+                    )
                 }
             }
         }
@@ -55,7 +63,8 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppRoot(bridge: PeytBridge) {
+fun AppRoot(bridge: PeytBridge,
+            navController: NavController) {
     val context = LocalContext.current
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
 
@@ -87,7 +96,7 @@ fun AppRoot(bridge: PeytBridge) {
             accountManager = remember(bridge) { AccountManager(Rpc(bridge)) },
             onLoggedIn = { loggedIn = true },
             onError = { msg ->
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Handler(Looper.getMainLooper()).post {
                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                 }
             },
@@ -117,7 +126,7 @@ fun AppRoot(bridge: PeytBridge) {
                 repository = repository,
                 onLoggedOut = {
                     loggedIn = false
-                },
+                }
             )
         }
     }
