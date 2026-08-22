@@ -10,6 +10,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,9 +26,11 @@ import cn.yzjtiantian.android.data.AppDatabase
 import cn.yzjtiantian.android.data.repository.PeytRepository
 import cn.yzjtiantian.android.ui.login.LoginScreen
 import cn.yzjtiantian.android.ui.shell.ShellScreen
-import cn.yzjtiantian.android.ui.theme.PeytchatTheme
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import cn.yzjtiantian.android.ui.theme.DynamicPeytchatTheme
+import cn.yzjtiantian.android.ui.theme.ThemeManager
+import kotlinx.coroutines.Dispatchers
+
 
 class MainActivity : ComponentActivity() {
 
@@ -35,7 +38,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            PeytchatTheme {
+            val themeMode by ThemeManager.themeMode.collectAsState()
+
+            DynamicPeytchatTheme(
+                themeMode = themeMode
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
