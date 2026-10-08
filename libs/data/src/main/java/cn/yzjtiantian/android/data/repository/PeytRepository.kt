@@ -201,7 +201,7 @@ class PeytRepository(
         val workQr = payload.optString("work_qr", "").takeIf { it.isNotEmpty() }
         if (generalQr == null && workQr == null) return
         val msg = try { getMessage(msgId) } catch (_: Exception) { return }
-        val workspaceId = db.channelDao().getWorkspaceId(msg.chatId) ?: return
+        val workspaceId = db.channelDao().getWorkspaceId(msg.chatId) ?: db.workspaceDao().findByMasterChat(msg.chatId)?.id?:return;
         if (generalQr != null) {
             joinPeytChannel(workspaceId, generalQr, "闲聊", "General", null)
         }
@@ -863,10 +863,7 @@ class PeytRepository(
 
     /** Invite link for the current workspace, a core securejoin QR/URL. */
     suspend fun getInviteLink(): String {
-        val wsId = currentWorkspaceId()
-        val ws = db.workspaceDao().listWorkspaces().firstOrNull { it.id == wsId }
-            ?: throw RpcException("no workspace")
-        return getSecureJoinQr(ws.masterChatId)
+        return getSecureJoinQr(null);
     }
 
     private fun parseInviteEmail(raw: String): String? {
