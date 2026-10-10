@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # 用法:
-#   ./scripts/build-android-fixed.sh [release|debug]
+#   ./scripts/build-android.sh [release|debug]
 #   release: 构建 release 版本 (默认 debug)
 
 set -euo pipefail
@@ -54,6 +54,62 @@ else
     info "构建模式: DEBUG"
 fi
 
+# ---------- NDK 路径探测 ----------
+detect_ndk() {
+    # 1) 已有环境变量
+    for var in ANDROID_NDK_HOME ANDROID_NDK_ROOT NDK_HOME; do
+        if [[ -n "${!var:-}" && -d "${!var}" ]]; then
+            echo "${!var}"
+            return 0
+        fi
+    done
+
+    # 2) 常见 SDK 路径
+    local candidates=(
+        "$HOME/Android/Sdk/ndk"
+        "$HOME/Library/Android/sdk/ndk"      # macOS
+        "/opt/android-sdk/ndk"
+        "/usr/lib/android-ndk"
+        "/opt/android-studio/plugins/android-ndk"
+    )
+    for base in "${candidates[@]}"; do
+        if [[ -d "$base" ]]; then
+            # 取版本号最大的一个
+            local latest
+            latest=$(ls -1d "$base"/*/ 2>/dev/null | sort -V | tail -n1)
+            if [[ -n "$latest" && -x "${latest}toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" ]]; then
+                echo "${latest%/}"
+                return 0
+            fi
+            # 有些路径本身就是 NDK 根
+            if [[ -x "$base/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" ]]; then
+                echo "$base"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+if NDK_PATH=$(detect_ndk); then
+    export ANDROID_NDK_HOME="$NDK_PATH"
+    info "NDK: $ANDROID_NDK_HOME"
+else
+    warn "未自动找到 Android NDK"
+    read -r -p "请输入 Android NDK 路径 (例如 ~/Android/Sdk/ndk/30.0.16248370): " NDK_INPUT
+    # 展开 ~
+    NDK_INPUT="${NDK_INPUT/#\~/$HOME}"
+    if [[ -d "$NDK_INPUT" && -x "$NDK_INPUT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" ]]; then
+        export ANDROID_NDK_HOME="$NDK_INPUT"
+        info "使用 NDK: $ANDROID_NDK_HOME"
+    else
+        error "无效的 NDK 路径: $NDK_INPUT"
+        error "需要包含 toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy"
+        exit 1
+    fi
+fi
+
 CORE_DIR="$PROJECT_ROOT/core"
 RUST_DIR="$PROJECT_ROOT/rust"
 JNI_LIBS_DIR="$PROJECT_ROOT/app/src/main/jniLibs/$NDK_ABI"
@@ -77,19 +133,53 @@ if [[ ! -f "Cargo.toml" ]]; then
 fi
 
 info "构建 deltachat_ffi ($RUST_PROFILE)..."
-if cargo ndk -t "$NDK_ABI" "${CARGO_ARGS[@]}" build -p deltachat_ffi; then
+if cargo ndk -t "$NDK_ABI" build "${CARGO_ARGS[@]}" -p deltachat_ffi; then
     success "deltachat_ffi 构建成功"
 else
     error "deltachat_ffi 构建失败"
     exit 1
 fi
 
+# ---------- 检查并生成 patched 库 ----------
 CORE_LIB="$CORE_DIR/target/aarch64-linux-android/$RUST_PROFILE/libdeltachat.a"
-if [[ -f "$CORE_LIB" ]]; then
-    success "deltachat 静态库: $CORE_LIB"
-    ls -lh "$CORE_LIB"
+PATCHED_LIB="$CORE_DIR/target/aarch64-linux-android/$RUST_PROFILE/libdeltachat_patched.a"
+
+if [[ ! -f "$CORE_LIB" ]]; then
+    error "deltachat 静态库未找到: $CORE_LIB"
+    exit 1
+fi
+
+success "deltachat 静态库: $CORE_LIB"
+ls -lh "$CORE_LIB"
+
+NEED_PATCH=0
+if [[ ! -f "$PATCHED_LIB" ]]; then
+    info "patched 库不存在，需要生成"
+    NEED_PATCH=1
+elif [[ "$CORE_LIB" -nt "$PATCHED_LIB" ]]; then
+    info "libdeltachat.a 比 patched 库新，需要重新生成"
+    NEED_PATCH=1
 else
-    warn "deltachat 静态库未找到: $CORE_LIB"
+    info "patched 库已是最新，跳过"
+fi
+
+if [[ "$NEED_PATCH" -eq 1 ]]; then
+    if ! command -v lib-patcher &> /dev/null; then
+        error "lib-patcher 未安装。运行: cargo install lib-patcher"
+        exit 1
+    fi
+    info "给 libdeltachat.a 打补丁..."
+    if lib-patcher \
+        --input "$CORE_LIB" \
+        --output "$PATCHED_LIB" \
+        --keep-prefix "dc_" \
+        --triplet aarch64-linux-android; then
+        success "补丁完成: $PATCHED_LIB"
+        ls -lh "$PATCHED_LIB"
+    else
+        error "lib-patcher 失败"
+        exit 1
+    fi
 fi
 
 info "步骤 2/5: 构建 peytchat-bridge..."
@@ -101,7 +191,7 @@ if [[ ! -f "Cargo.toml" ]]; then
 fi
 
 info "构建 peytchat-bridge ($RUST_PROFILE)..."
-if cargo ndk -t "$NDK_ABI" "${CARGO_ARGS[@]}" build -p peytchat-bridge; then
+if cargo ndk -t "$NDK_ABI" build "${CARGO_ARGS[@]}" -p peytchat-bridge; then
     success "peytchat-bridge 构建成功"
 else
     error "peytchat-bridge 构建失败"
@@ -213,11 +303,12 @@ echo "=========================================="
 echo "构建信息:"
 echo "  - 模式: $PROFILE"
 echo "  - 架构: $NDK_ABI"
+echo "  - NDK: $ANDROID_NDK_HOME"
 echo "  - .so 文件: $JNI_LIBS_DIR/libpeytchat_bridge.so"
 echo "  - APK 文件: $APK_PATH"
 echo ""
 echo "下一步:"
 echo "  1. 安装: adb install $APK_PATH"
 echo "  2. 查看日志: adb logcat | grep -E \"cn.yzjtiantian.android|deltachat|rust\""
-echo "  3. 重新构建: ./scripts/build-android-fixed.sh [debug|release]"
+echo "  3. 重新构建: ./scripts/build-android.sh [debug|release]"
 echo "=========================================="

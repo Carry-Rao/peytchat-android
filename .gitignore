@@ -32,4 +32,5 @@ a.out
 
 patch-sample/
 updates/
-patch/
+keystore.properties
+*.jks
