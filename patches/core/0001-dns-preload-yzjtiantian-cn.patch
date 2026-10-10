@@ -1,0 +1,29 @@
+diff --git a/src/net/dns.rs b/src/net/dns.rs
+index f4e6bec11..d85d24222 100644
+--- a/src/net/dns.rs
++++ b/src/net/dns.rs
+@@ -679,6 +679,24 @@ pub(crate) async fn update_connect_timestamp(
+                 IpAddr::V4(Ipv4Addr::new(185, 230, 214, 164)),
+             ],
+         ),
++        // PEYT chatmail relay.
++        //
++        // `yzjtiantian.cn` uses wildcard DNS records that resolve every
++        // subdomain (including `imap.`/`smtp.`/the apex used for mail) to a
++        // Cloudflare proxy. Cloudflare does not forward mail ports (993/465
++        // black-hole) and the proxied HTTP path is unreliable from China,
++        // which made configure/registration hang and time out.
++        //
++        // The real mail+web origin is published in the domain's own SRV
++        // records (`_imaps._tcp` / `_submissions._tcp` →
++        // `_dc-srv.535fd80ee7d7...` → 8.136.195.207) and serves a
++        // Let's Encrypt certificate valid for `yzjtiantian.cn`, so TLS
++        // hostname verification still passes when connecting by hostname.
++        // Update this entry if the server IP ever changes.
++        (
++            "yzjtiantian.cn",
++            vec![IpAddr::V4(Ipv4Addr::new(8, 136, 195, 207))],
++        ),
+         // Known public chatmail relays from https://chatmail.at/relays
+         (
+             "mehl.cloud",

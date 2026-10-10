@@ -132,6 +132,28 @@ if [[ ! -f "Cargo.toml" ]]; then
     exit 1
 fi
 
+# ---------- 应用 core 子模块本地补丁 ----------
+# patches/core/*.patch 以 git diff 格式存放对上游 deltachat core 的定制
+# (当前: yzjtiantian.cn DNS preload 修复登录超时)。
+# 幂等：已应用则跳过；未应用则 apply；无法干净应用则中止构建。
+PATCH_DIR="$PROJECT_ROOT/patches/core"
+if [[ -d "$PATCH_DIR" ]]; then
+    shopt -s nullglob
+    for patch_file in "$PATCH_DIR"/*.patch; do
+        patch_name="$(basename "$patch_file")"
+        if git -C "$CORE_DIR" apply --reverse --check "$patch_file" 2>/dev/null; then
+            info "补丁已应用，跳过: $patch_name"
+        elif git -C "$CORE_DIR" apply --check "$patch_file" 2>/dev/null; then
+            info "应用 core 补丁: $patch_name"
+            git -C "$CORE_DIR" apply "$patch_file"
+        else
+            error "core 补丁无法干净应用: $patch_name"
+            error "请检查 core 子模块状态 (git -C core status)，或手动处理后重试"
+            exit 1
+        fi
+    done
+fi
+
 info "构建 deltachat_ffi ($RUST_PROFILE)..."
 if cargo ndk -t "$NDK_ABI" build "${CARGO_ARGS[@]}" -p deltachat_ffi; then
     success "deltachat_ffi 构建成功"

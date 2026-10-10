@@ -122,14 +122,39 @@ class AccountManager(private val rpc: Rpc) {
      * POSTs to the chatmail onboarding URL and returns the issued credentials.
      * The server responds with `{email, password}` on success, or an error
      * response with a `reason` field on failure.
+     *
+     * The HTTP path (CDN-proxied) can be slow or drop connections from CN
+     * networks, so timeouts are generous and transient IO failures are
+     * retried a few times before surfacing an error to the user.
      */
     private fun requestChatmailCredentials(server: String): Pair<String, String> {
         val url = normalizeChatmailServer(server)
+        var lastError: Exception? = null
+        repeat(ONBOARDING_ATTEMPTS) { attempt ->
+            if (attempt > 0) {
+                try {
+                    Thread.sleep(1000L * attempt)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+            }
+            try {
+                return requestChatmailCredentialsOnce(url)
+            } catch (e: java.net.SocketTimeoutException) {
+                lastError = RpcException("连接注册服务器超时，请检查网络后重试")
+            } catch (e: java.io.IOException) {
+                lastError = e
+            }
+        }
+        throw lastError ?: RpcException("连接注册服务器失败")
+    }
+
+    private fun requestChatmailCredentialsOnce(url: String): Pair<String, String> {
         val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         return try {
             conn.requestMethod = "POST"
-            conn.connectTimeout = 15000
-            conn.readTimeout = 15000
+            conn.connectTimeout = ONBOARDING_CONNECT_TIMEOUT_MS
+            conn.readTimeout = ONBOARDING_READ_TIMEOUT_MS
             conn.doOutput = true
             conn.setRequestProperty("Accept", "application/json")
             conn.setRequestProperty("Content-Type", "application/json")
@@ -144,6 +169,8 @@ class AccountManager(private val rpc: Rpc) {
                 val reason = runCatching {
                     JSONObject(body).optString("reason")
                 }.getOrDefault(body)
+                // HTTP errors are authoritative (e.g. 502 from the chatmail
+                // server): do not retry, surface them directly.
                 throw RpcException("chatmail 注册失败 (HTTP $code): $reason")
             }
             val json = JSONObject(body)
@@ -162,6 +189,15 @@ class AccountManager(private val rpc: Rpc) {
     companion object {
         /** Default chatmail onboarding server (host or URL). */
         const val DEFAULT_CHATMAIL_SERVER: String = "yzjtiantian.cn/new"
+
+        /** Onboarding POST: connection establishment budget per attempt. */
+        private const val ONBOARDING_CONNECT_TIMEOUT_MS = 30_000
+
+        /** Onboarding POST: response wait budget per attempt. */
+        private const val ONBOARDING_READ_TIMEOUT_MS = 60_000
+
+        /** Total onboarding POST attempts (1 try + retries on transient IO errors). */
+        private const val ONBOARDING_ATTEMPTS = 3
 
         /**
          * Normalizes a user-supplied server into an onboarding HTTP(S) URL.
