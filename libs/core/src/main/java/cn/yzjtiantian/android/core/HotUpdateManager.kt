@@ -43,7 +43,9 @@ class HotUpdateManager(private val context: Context) {
 
     companion object {
         private const val TAG = "PEYT"
-        private const val PREF_NAME = "peyt_hot_update"
+
+        /** 补丁热更新 SharedPreferences 文件名（apk_just_updated 标志也存这里）。 */
+        const val PREF_NAME = "peyt_hot_update"
         private const val PATCH_DIR = "patches"
 
         /** 默认更新清单地址（线上服务端，设置页里也可修改并持久化）。 */
