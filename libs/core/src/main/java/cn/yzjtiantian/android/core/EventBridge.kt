@@ -55,6 +55,19 @@ class EventBridge(
 
         // ✅ 启动时检查待加载的补丁
         hotUpdateManager?.loadPendingPatches()
+
+        // ✅ 大版本更新后首次启动：消费 apk_just_updated 标志，自动静默跑一次补丁检查。
+        // 新 APK 可能改了基座类，旧补丁不一定兼容；装完新 APK 后按新清单拉补丁更安全。
+        context?.let { ctx ->
+            val prefs = ctx.getSharedPreferences(HotUpdateManager.PREF_NAME, Context.MODE_PRIVATE)
+            if (prefs.getBoolean(ApkUpdateManager.PREF_APK_JUST_UPDATED, false)) {
+                prefs.edit().remove(ApkUpdateManager.PREF_APK_JUST_UPDATED).apply()
+                android.util.Log.d("PEYT", "APK 刚完成大版本更新，自动检查补丁更新")
+                hotUpdateManager?.checkForUpdates { result ->
+                    android.util.Log.d("PEYT", "自动补装补丁结果: ${result.message}")
+                }
+            }
+        }
     }
 
     fun stop() {
