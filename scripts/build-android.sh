@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 #
 # 用法:
-#   ./scripts/build-android.sh [release|debug]
-#   release: 构建 release 版本 (默认 debug)
+#   ./scripts/build-android.sh [release|debug] [abi1,abi2,...]
+#     release|debug   构建类型，默认 debug
+#     abi1,abi2,...   逗号分隔的目标 ABI，默认 arm64-v8a
+#                     可选: arm64-v8a | armeabi-v7a | x86 | x86_64
+#
+#   示例:
+#     ./scripts/build-android.sh release arm64-v8a,x86_64   # 真机 + x86_64 模拟器
+#     PEYT_ABIS=x86_64 ./scripts/build-android.sh debug      # 仅 x86_64 模拟器
+#
+# 说明:
+#   对每个 ABI 依次执行：编译 deltachat_ffi → 用 lib-patcher 生成 patched 静态库
+#   → 编译 peytchat-bridge → 复制 libpeytchat_bridge.so 到 jniLibs/<abi>/。
+#   app/build.gradle.kts 会按 jniLibs 中实际存在的 ABI 限定 abiFilters，二者需一致；
+#   否则 APK 会声明未构建的架构，导致对应设备上「安装成功但启动即崩」。
 
 set -euo pipefail
 
@@ -36,14 +48,24 @@ check_command() {
 }
 
 PROFILE="${1:-debug}"
-NDK_ABI="arm64-v8a"
+ABI_LIST="${2:-${PEYT_ABIS:-arm64-v8a}}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CARGO_ARGS=()
 
+IFS=',' read -r -a ABIS <<< "$ABI_LIST"
+if [[ "${#ABIS[@]}" -eq 0 || -z "${ABIS[0]}" ]]; then
+    error "目标 ABI 列表为空"
+    exit 1
+fi
+
 info "检查必要的工具..."
 check_command "cargo"
-check_command "adb"
-check_command "zip" || warn "zip 命令未安装，部分验证功能可能不可用"
+if ! command -v adb &> /dev/null; then
+    warn "adb 未安装，将跳过安装到设备（CI 环境正常）"
+fi
+if ! command -v zip &> /dev/null; then
+    warn "zip 命令未安装，部分验证功能可能不可用"
+fi
 
 if [[ "$PROFILE" == "release" ]]; then
     CARGO_ARGS+=(--release)
@@ -112,13 +134,11 @@ fi
 
 CORE_DIR="$PROJECT_ROOT/core"
 RUST_DIR="$PROJECT_ROOT/rust"
-JNI_LIBS_DIR="$PROJECT_ROOT/app/src/main/jniLibs/$NDK_ABI"
-TARGET_DIR="$PROJECT_ROOT/rust/target/aarch64-linux-android/$RUST_PROFILE"
 
 info "项目根目录: $PROJECT_ROOT"
-info "NDK ABI: $NDK_ABI"
+info "目标 ABI: ${ABIS[*]}"
 
-info "步骤 1/5: 检查 deltachat_ffi..."
+info "步骤 1/3: 检查 deltachat_ffi 与 core 子模块..."
 
 if [[ ! -d "$CORE_DIR" ]]; then
     error "core 目录不存在: $CORE_DIR"
@@ -126,8 +146,7 @@ if [[ ! -d "$CORE_DIR" ]]; then
     exit 1
 fi
 
-cd "$CORE_DIR"
-if [[ ! -f "Cargo.toml" ]]; then
+if [[ ! -f "$CORE_DIR/Cargo.toml" ]]; then
     error "core/Cargo.toml 不存在"
     exit 1
 fi
@@ -154,126 +173,122 @@ if [[ -d "$PATCH_DIR" ]]; then
     done
 fi
 
-info "构建 deltachat_ffi ($RUST_PROFILE)..."
-if cargo ndk -t "$NDK_ABI" build "${CARGO_ARGS[@]}" -p deltachat_ffi; then
-    success "deltachat_ffi 构建成功"
-else
-    error "deltachat_ffi 构建失败"
-    exit 1
-fi
+# ---------- ABI <-> Rust target triple ----------
+abi_to_triple() {
+    case "$1" in
+        arm64-v8a)   echo "aarch64-linux-android" ;;
+        armeabi-v7a) echo "armv7-linux-androideabi" ;;
+        x86)         echo "i686-linux-android" ;;
+        x86_64)      echo "x86_64-linux-android" ;;
+        *) return 1 ;;
+    esac
+}
 
-# ---------- 检查并生成 patched 库 ----------
-CORE_LIB="$CORE_DIR/target/aarch64-linux-android/$RUST_PROFILE/libdeltachat.a"
-PATCHED_LIB="$CORE_DIR/target/aarch64-linux-android/$RUST_PROFILE/libdeltachat_patched.a"
-
-if [[ ! -f "$CORE_LIB" ]]; then
-    error "deltachat 静态库未找到: $CORE_LIB"
-    exit 1
-fi
-
-success "deltachat 静态库: $CORE_LIB"
-ls -lh "$CORE_LIB"
-
-NEED_PATCH=0
-if [[ ! -f "$PATCHED_LIB" ]]; then
-    info "patched 库不存在，需要生成"
-    NEED_PATCH=1
-elif [[ "$CORE_LIB" -nt "$PATCHED_LIB" ]]; then
-    info "libdeltachat.a 比 patched 库新，需要重新生成"
-    NEED_PATCH=1
-else
-    info "patched 库已是最新，跳过"
-fi
-
-if [[ "$NEED_PATCH" -eq 1 ]]; then
-    if ! command -v lib-patcher &> /dev/null; then
-        error "lib-patcher 未安装。运行: cargo install lib-patcher"
-        exit 1
+# ---------- 单个 ABI 的完整构建 ----------
+build_abi() {
+    local abi="$1"
+    local triple
+    if ! triple=$(abi_to_triple "$abi"); then
+        error "不支持的 ABI: $abi (可选: arm64-v8a, armeabi-v7a, x86, x86_64)"
+        return 1
     fi
-    info "给 libdeltachat.a 打补丁..."
-    if lib-patcher \
-        --input "$CORE_LIB" \
-        --output "$PATCHED_LIB" \
-        --keep-prefix "dc_" \
-        --triplet aarch64-linux-android; then
-        success "补丁完成: $PATCHED_LIB"
-        ls -lh "$PATCHED_LIB"
+
+    local core_lib="$CORE_DIR/target/$triple/$RUST_PROFILE/libdeltachat.a"
+    local patched_lib="$CORE_DIR/target/$triple/$RUST_PROFILE/libdeltachat_patched.a"
+    local jni_dir="$PROJECT_ROOT/app/src/main/jniLibs/$abi"
+
+    info "========== ABI: $abi ($triple) =========="
+
+    info "[$abi] 编译 deltachat_ffi ($RUST_PROFILE)..."
+    if ! ( cd "$CORE_DIR" && cargo ndk -t "$abi" build "${CARGO_ARGS[@]}" -p deltachat_ffi ); then
+        error "[$abi] deltachat_ffi 构建失败"
+        return 1
+    fi
+    success "[$abi] deltachat_ffi 构建成功"
+
+    if [[ ! -f "$core_lib" ]]; then
+        error "[$abi] 未找到静态库: $core_lib"
+        return 1
+    fi
+    ls -lh "$core_lib"
+
+    # 生成 patched 静态库（目标不存在或比源旧时重新生成）
+    local need_patch=0
+    if [[ ! -f "$patched_lib" || "$core_lib" -nt "$patched_lib" ]]; then
+        need_patch=1
+    fi
+    if [[ "$need_patch" -eq 1 ]]; then
+        if ! command -v lib-patcher &> /dev/null; then
+            error "lib-patcher 未安装。运行: cargo install lib-patcher"
+            return 1
+        fi
+        info "[$abi] 用 lib-patcher 生成 patched 静态库..."
+        if lib-patcher \
+            --input "$core_lib" \
+            --output "$patched_lib" \
+            --keep-prefix "dc_" \
+            --triplet "$triple"; then
+            success "[$abi] 补丁完成: $patched_lib"
+            ls -lh "$patched_lib"
+        else
+            error "[$abi] lib-patcher 失败"
+            return 1
+        fi
     else
-        error "lib-patcher 失败"
-        exit 1
+        info "[$abi] patched 库已是最新，跳过"
     fi
-fi
 
-info "步骤 2/5: 构建 peytchat-bridge..."
+    info "[$abi] 编译 peytchat-bridge ($RUST_PROFILE)..."
+    if ! ( cd "$RUST_DIR" && cargo ndk -t "$abi" build "${CARGO_ARGS[@]}" -p peytchat-bridge ); then
+        error "[$abi] peytchat-bridge 构建失败"
+        return 1
+    fi
+    success "[$abi] peytchat-bridge 构建成功"
 
-cd "$RUST_DIR"
-if [[ ! -f "Cargo.toml" ]]; then
+    local so_file=""
+    local candidates=(
+        "$RUST_DIR/target/$triple/$RUST_PROFILE/libpeytchat_bridge.so"
+        "$RUST_DIR/target/$abi/$RUST_PROFILE/libpeytchat_bridge.so"
+        "/tmp/peytchat-jnilibs/$abi/libpeytchat_bridge.so"
+    )
+    for path in "${candidates[@]}"; do
+        if [[ -f "$path" ]]; then
+            so_file="$path"
+            break
+        fi
+    done
+
+    if [[ -z "$so_file" ]]; then
+        error "[$abi] 找不到 libpeytchat_bridge.so，搜索路径:"
+        for path in "${candidates[@]}"; do
+            echo "  - $path"
+        done
+        return 1
+    fi
+
+    mkdir -p "$jni_dir"
+    if cp "$so_file" "$jni_dir/libpeytchat_bridge.so"; then
+        success "[$abi] .so 已复制: $so_file -> $jni_dir/"
+        ls -lh "$jni_dir/libpeytchat_bridge.so"
+    else
+        error "[$abi] 复制 .so 失败"
+        return 1
+    fi
+}
+
+if [[ ! -f "$RUST_DIR/Cargo.toml" ]]; then
     error "rust/Cargo.toml 不存在"
     exit 1
 fi
 
-info "构建 peytchat-bridge ($RUST_PROFILE)..."
-if cargo ndk -t "$NDK_ABI" build "${CARGO_ARGS[@]}" -p peytchat-bridge; then
-    success "peytchat-bridge 构建成功"
-else
-    error "peytchat-bridge 构建失败"
-    exit 1
-fi
-
-info "步骤 3/5: 查找并复制 .so 文件..."
-
-SO_FILE=""
-POSSIBLE_PATHS=(
-    "$RUST_DIR/target/aarch64-linux-android/$RUST_PROFILE/libpeytchat_bridge.so"
-    "$RUST_DIR/target/$NDK_ABI/$RUST_PROFILE/libpeytchat_bridge.so"
-    "/tmp/peytchat-jnilibs/$NDK_ABI/libpeytchat_bridge.so"
-)
-
-for path in "${POSSIBLE_PATHS[@]}"; do
-    if [[ -f "$path" ]]; then
-        SO_FILE="$path"
-        info "找到 .so 文件: $path"
-        break
-    fi
+info "步骤 2/3: 逐 ABI 构建 native 库..."
+for abi in "${ABIS[@]}"; do
+    build_abi "$abi" || exit 1
 done
 
-if [[ -z "$SO_FILE" ]]; then
-    error "找不到 libpeytchat_bridge.so 文件"
-    error "搜索路径:"
-    for path in "${POSSIBLE_PATHS[@]}"; do
-        echo "  - $path"
-    done
-    exit 1
-fi
-
-info "步骤 4/5: 复制到 jniLibs..."
-
-mkdir -p "$JNI_LIBS_DIR"
-
-if cp "$SO_FILE" "$JNI_LIBS_DIR/libpeytchat_bridge.so"; then
-    success "复制成功: $SO_FILE -> $JNI_LIBS_DIR/"
-    ls -lh "$JNI_LIBS_DIR/libpeytchat_bridge.so"
-else
-    error "复制失败"
-    exit 1
-fi
-
-info "步骤 5/5: 验证构建..."
-
+info "步骤 3/3: 打包 APK..."
 cd "$PROJECT_ROOT"
 
-if [[ -f "$JNI_LIBS_DIR/libpeytchat_bridge.so" ]]; then
-    SO_SIZE=$(du -h "$JNI_LIBS_DIR/libpeytchat_bridge.so" | cut -f1)
-    success ".so 文件已就位 (大小: $SO_SIZE)"
-else
-    error ".so 文件未在预期位置: $JNI_LIBS_DIR/"
-    exit 1
-fi
-
-#info "清理旧的 APK..."
-#./gradlew clean
-
-info "构建 APK ($PROFILE)..."
 if ./gradlew assemble${PROFILE^}; then
     success "APK 构建成功"
 else
@@ -324,13 +339,15 @@ success "构建完成！"
 echo "=========================================="
 echo "构建信息:"
 echo "  - 模式: $PROFILE"
-echo "  - 架构: $NDK_ABI"
+echo "  - 架构: ${ABIS[*]}"
 echo "  - NDK: $ANDROID_NDK_HOME"
-echo "  - .so 文件: $JNI_LIBS_DIR/libpeytchat_bridge.so"
+for abi in "${ABIS[@]}"; do
+    echo "  - .so 文件: $PROJECT_ROOT/app/src/main/jniLibs/$abi/libpeytchat_bridge.so"
+done
 echo "  - APK 文件: $APK_PATH"
 echo ""
 echo "下一步:"
 echo "  1. 安装: adb install $APK_PATH"
 echo "  2. 查看日志: adb logcat | grep -E \"cn.yzjtiantian.android|deltachat|rust\""
-echo "  3. 重新构建: ./scripts/build-android.sh [debug|release]"
+echo "  3. 重新构建: ./scripts/build-android.sh [debug|release] [abi1,abi2,...]"
 echo "=========================================="

@@ -1,7 +1,7 @@
 # 热更新（Hot Update）说明
 
-自托管 DEX 补丁热更新：客户端从服务端拉取**更新清单**，下载补丁 `.dex` 文件并做
-MD5 校验，记录后**下次启动时**通过 `DexClassLoader` 加载注册。
+自托管 DEX 补丁热更新：客户端从服务端拉取**更新清单**（**仅支持 https**），下载补丁
+`.dex` 文件并做 SHA-256 校验，记录后**下次启动时**通过 `DexClassLoader` 加载注册。
 
 ## 模块结构
 
@@ -31,13 +31,13 @@ MD5 校验，记录后**下次启动时**通过 `DexClassLoader` 加载注册。
       "module": "shell",
       "version": "1.0.1",
       "url": "https://your-server/peytchat/patches/shell_1.0.1.dex",
-      "md5": "d41d8cd98f00b204e9800998ecf8427e"
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "module": "login",
       "version": "1.0.2",
       "url": "https://your-server/peytchat/patches/login_1.0.2.dex",
-      "md5": "9e107d9d372bb6826bd81d3542a419d6"
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
     }
   ]
 }
@@ -47,9 +47,11 @@ MD5 校验，记录后**下次启动时**通过 `DexClassLoader` 加载注册。
 
 - `appVersion`：可选，App 版本（当前仅展示用，不做强制校验）。
 - `patches[].module`：模块名，取值 `shell` / `login` / `chat` / `account`。
-- `patches[].version`：补丁版本号（字符串比较；与本地已记录版本不同即视为需要更新）。
-- `patches[].url`：补丁 dex 的下载地址。
-- `patches[].md5`：补丁 dex 的 MD5（小写十六进制），客户端下载后校验，不通过则丢弃。
+- `patches[].version`：补丁版本号（语义化比较；仅当**严格大于**本地已记录版本时才更新，
+  相等或更低一律跳过，防止被下发旧版补丁做降级攻击）。
+- `patches[].url`：补丁 dex 的下载地址（必须是 `https://`，否则拒绝）。
+- `patches[].sha256`：补丁 dex 的 SHA-256（64 位小写十六进制），客户端下载后校验，不通过则丢弃；
+  为兼容旧清单仍接受 `md5`（32 位）。
 
 ## 部署到 GitHub（免费静态托管）
 
@@ -109,15 +111,15 @@ https://cdn.jsdelivr.net/gh/<用户名>/<仓库名>@main/patches/shell_1.0.1.dex
     updates/patches/login_1.0.2.dex
 ```
 
-脚本自动计算每个文件的 MD5 并生成 `update.json`，然后提交推送即可。
+脚本自动计算每个文件的 SHA-256 并生成 `update.json`，然后提交推送即可。
 
 ## 客户端流程
 
 1. 设置页 →「检查更新」→ 弹出对话框（默认清单地址
-   `https://peyt.org/peytchat-android-update/update.json`，可修改并持久化）。
+   `https://peyt.org/peytchat-android-update/update.json`，可修改并持久化；**仅接受 https**）。
 2. 点击「立即检查」→ `HotUpdateManager.checkForUpdates(url)`：
    - 拉取清单，逐条对比本地已记录版本；
-   - 新版本 → 下载 dex → MD5 校验 → 写入
+   - 新版本（严格递增）→ 下载 dex → SHA-256 校验 → 写入
      `SharedPreferences`（`<module>_patch_path` / `<module>_version`，`loaded=false`）。
 3. 下次进程启动时 `EventBridge.start()` 调用 `HotUpdateManager.loadPendingPatches()`：
    - 重置各模块 `loaded=false`（DexClassLoader 不跨进程保留，需重新加载）；
@@ -132,8 +134,8 @@ https://cdn.jsdelivr.net/gh/<用户名>/<仓库名>@main/patches/shell_1.0.1.dex
    cd /tmp/update && python3 -m http.server 8000
    ```
 
-3. 手机与电脑同一网络，清单地址填
-   `http://<电脑IP>:8000/update.json`。
+3. 手机与电脑同一网络。**客户端只接受 https 清单地址**，明文 `http://` 会被直接拒绝；
+   本地联调可自签证书或走内网穿透（如 ngrok）提供 https。
 4. 设置页 →「检查更新」→「立即检查」，观察下载/校验结果提示。
 
 ### 构造一个测试补丁 dex
@@ -152,8 +154,8 @@ EOF
 javac Patch.java
 d8 --output . Patch.class            # 生成 classes.dex，改名为 shell_1.0.1.dex
 
-# 3. 计算 md5 并填进清单
-md5sum shell_1.0.1.dex
+# 3. 计算 sha256 并填进清单
+sha256sum shell_1.0.1.dex
 ```
 
 ## 补丁类怎么写

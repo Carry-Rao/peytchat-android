@@ -339,7 +339,8 @@ class PeytRepository(
             "https://peyt.yzjtiantian.cn/",
             "https://i.delta.chat/",
         )
-        android.util.Log.d("PEYT", "[secure_join] in=$qr -> out=$normalized")
+        // 不打印邀请串（含加入凭据），仅记录是否发生了域名规范化
+        android.util.Log.d("PEYT", "[secure_join] normalized=${normalized != qr}")
         val result = rpc.callRaw("secure_join", JSONArray().put(accountId()).put(normalized)) as? Number
             ?: throw RpcException("secure_join returned no id")
         return result.toLong()

@@ -13,8 +13,8 @@ import java.security.MessageDigest
  * 自托管 DEX 补丁热更新管理器。
  *
  * 完整链路：
- *  1. [checkForUpdates] 拉取更新清单（JSON），与本地已记录版本对比；
- *  2. 对每个新版本补丁下载 .dex 文件并做 MD5 校验；
+ *  1. [checkForUpdates] 拉取更新清单（JSON，**仅允许 https**），与本地已记录版本对比；
+ *  2. 仅当清单版本「严格大于」本地版本时，下载 .dex 并做哈希校验（sha256 / md5）；
  *  3. 校验通过后记录到 SharedPreferences（loaded=false）；
  *  4. 下次进程启动时由 [loadPendingPatches] 通过 DexClassLoader 加载，
  *     并把 ClassLoader 注册到 [ModuleManager]。
@@ -28,11 +28,16 @@ import java.security.MessageDigest
  *       "module": "shell",
  *       "version": "1.0.1",
  *       "url": "https://peyt.org/peytchat-android-update/shell_1.0.1.dex",
- *       "md5": "d41d8cd98f00b204e9800998ecf8427e"
+ *       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
  *     }
  *   ]
  * }
  * ```
+ * `sha256` 为推荐字段（64 位 hex）；为兼容旧清单仍接受 `md5`（32 位 hex）。
+ *
+ * ⚠️ 安全边界：哈希只能防「传输损坏」，**不具备身份认证能力**（哈希与文件同源，
+ * 可被一同替换）。故本类强制 https；若要防「被控服务器下发恶意补丁」，需再对
+ * 清单做非对称签名 + 客户端内置公钥验签（尚未实现）。
  *
  * 已知限制：Android 类加载是 parent-first 的，若补丁类名与基座 APK 内已有类
  * 完全同名，[DexClassLoader] 会解析到基座版本，补丁不生效。要让补丁真正生效，
@@ -60,6 +65,38 @@ class HotUpdateManager(private val context: Context) {
 
         /** 所有可热更新模块。 */
         val ALL_MODULES = listOf(MODULE_SHELL, MODULE_LOGIN, MODULE_CHAT, MODULE_ACCOUNT, MODULE_DATA)
+
+        /**
+         * 校验并构造 URL：**只允许 https**。返回 null 表示非法。
+         * 更新清单/补丁走明文 HTTP 时可被中间人替换为恶意内容，故一律拒绝。
+         */
+        internal fun httpsOnly(raw: String): java.net.URL? {
+            return try {
+                val url = java.net.URL(raw.trim())
+                if (url.protocol.equals("https", ignoreCase = true)) url else null
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /** 语义化版本比较：a > b 返回正数，a == b 返回 0，a < b 返回负数。 */
+        internal fun compareVersion(a: String, b: String): Int {
+            val pa = a.split('.', '-', '+')
+            val pb = b.split('.', '-', '+')
+            for (i in 0 until maxOf(pa.size, pb.size)) {
+                val sa = pa.getOrNull(i) ?: "0"
+                val sb = pb.getOrNull(i) ?: "0"
+                val ia = sa.toIntOrNull()
+                val ib = sb.toIntOrNull()
+                val cmp = if (ia != null && ib != null) ia.compareTo(ib) else sa.compareTo(sb)
+                if (cmp != 0) return cmp
+            }
+            return 0
+        }
+
+        /** 把来自远端的字符串限制为安全的文件名片段，去掉路径分隔符等。 */
+        internal fun safeName(raw: String): String =
+            raw.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "_" }
     }
 
     /** 一次检查更新的结果，回调在工作线程执行。 */
@@ -77,12 +114,12 @@ class HotUpdateManager(private val context: Context) {
         val downloaded: Boolean,
     )
 
-    /** 更新清单中的单个补丁描述。 */
+    /** 更新清单中的单个补丁描述。`hash` 支持 sha256（64 位 hex）或 md5（32 位 hex）。 */
     data class PatchInfo(
         val module: String,
         val version: String,
         val url: String,
-        val md5: String,
+        val hash: String,
     )
 
     fun interface UpdateCallback {
@@ -138,7 +175,9 @@ class HotUpdateManager(private val context: Context) {
                 val updated = mutableListOf<ModuleUpdate>()
                 for (patch in patches) {
                     val current = getInstalledVersion(patch.module)
-                    if (patch.version == current) continue // 已是该版本，跳过
+                    // 单调递增：仅当清单版本「严格大于」本地版本时才更新；
+                    // 相等或更低一律跳过，防止被下发旧版补丁做降级攻击。
+                    if (current != null && compareVersion(patch.version, current) <= 0) continue
                     val downloaded = downloadAndVerify(patch)
                     updated += ModuleUpdate(patch.module, current, patch.version, downloaded)
                 }
@@ -168,9 +207,10 @@ class HotUpdateManager(private val context: Context) {
         }.start()
     }
 
-    /** 拉取更新清单 JSON 文本。 */
+    /** 拉取更新清单 JSON 文本（仅允许 https）。 */
     private fun fetchManifest(url: String): String {
-        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        val conn = (httpsOnly(url) ?: throw IllegalArgumentException("清单地址必须为 https: $url"))
+            .openConnection() as java.net.HttpURLConnection
         conn.connectTimeout = 30_000
         conn.readTimeout = 30_000
         conn.requestMethod = "GET"
@@ -187,9 +227,10 @@ class HotUpdateManager(private val context: Context) {
                 val module = p.optString("module")
                 val version = p.optString("version")
                 val url = p.optString("url")
-                val md5 = p.optString("md5")
-                if (module.isNotEmpty() && version.isNotEmpty() && url.isNotEmpty()) {
-                    add(PatchInfo(module, version, url, md5))
+                // 推荐 sha256(64 hex)；兼容旧清单的 md5(32 hex)
+                val hash = p.optString("sha256").ifEmpty { p.optString("md5") }
+                if (module.isNotEmpty() && version.isNotEmpty() && url.isNotEmpty() && hash.isNotEmpty()) {
+                    add(PatchInfo(module, version, url, hash))
                 }
             }
         }
@@ -198,15 +239,15 @@ class HotUpdateManager(private val context: Context) {
     // ===== 下载与校验 =====
 
     /**
-     * 下载补丁并校验 MD5；通过则记录（下次启动由 [loadPendingPatches] 应用）。
+     * 下载补丁并校验哈希（sha256/md5）；通过则记录（下次启动由 [loadPendingPatches] 应用）。
      * 返回是否成功。
      */
     private fun downloadAndVerify(patch: PatchInfo): Boolean {
         return try {
             val file = downloadPatch(patch.url, patch.module, patch.version)
                 ?: return false
-            if (!verifyMd5(file, patch.md5)) {
-                Log.e(TAG, "MD5 校验失败: module=${patch.module}")
+            if (!verifyHash(file, patch.hash)) {
+                Log.e(TAG, "哈希校验失败: module=${patch.module}")
                 file.delete()
                 return false
             }
@@ -252,7 +293,7 @@ class HotUpdateManager(private val context: Context) {
         url: String,
         module: String,
         version: String,
-        md5: String,
+        hash: String,
     ) {
         Thread {
             try {
@@ -261,8 +302,8 @@ class HotUpdateManager(private val context: Context) {
                     Log.e(TAG, "下载补丁失败: $module")
                     return@Thread
                 }
-                if (!verifyMd5(patchFile, md5)) {
-                    Log.e(TAG, "MD5 校验失败: $module")
+                if (!verifyHash(patchFile, hash)) {
+                    Log.e(TAG, "哈希校验失败: $module")
                     patchFile.delete()
                     return@Thread
                 }
@@ -334,11 +375,13 @@ class HotUpdateManager(private val context: Context) {
 
     private fun downloadPatch(url: String, module: String, version: String): File? {
         return try {
-            val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            val connection = (httpsOnly(url) ?: throw IllegalArgumentException("补丁地址必须为 https: $url"))
+                .openConnection() as java.net.HttpURLConnection
             connection.connectTimeout = 30_000
             connection.readTimeout = 30_000
 
-            val patchFile = File(patchDir, "${module}_${version}.dex")
+            // module/version 来自远端清单，禁止其影响落地路径
+            val patchFile = File(patchDir, "${safeName(module)}_${safeName(version)}.dex")
             connection.inputStream.use { input ->
                 patchFile.outputStream().use { output ->
                     input.copyTo(output)
@@ -353,14 +396,22 @@ class HotUpdateManager(private val context: Context) {
         }
     }
 
-    private fun verifyMd5(file: File, expectedMd5: String): Boolean {
+    /**
+     * 校验文件哈希。算法按 `expected` 长度自动判定：64 位 hex → SHA-256，32 位 → MD5。
+     * 注意：哈希只能防「内容损坏」，不能防「被同时替换」（无身份认证能力）。
+     */
+    private fun verifyHash(file: File, expected: String): Boolean {
         return try {
-            val md5 = MessageDigest.getInstance("MD5")
-            val digest = md5.digest(file.readBytes())
-            val actualMd5 = digest.joinToString("") { "%02x".format(it) }
-            actualMd5.equals(expectedMd5, ignoreCase = true)
+            val algo = when (expected.trim().length) {
+                64 -> "SHA-256"
+                32 -> "MD5"
+                else -> return false
+            }
+            val digest = MessageDigest.getInstance(algo).digest(file.readBytes())
+            val actual = digest.joinToString("") { "%02x".format(it) }
+            actual.equals(expected.trim(), ignoreCase = true)
         } catch (e: Exception) {
-            Log.e(TAG, "MD5 校验失败", e)
+            Log.e(TAG, "哈希校验失败", e)
             false
         }
     }

@@ -22,6 +22,11 @@ android {
     }
 }
 
+ksp {
+    // Room 导出的 schema 基线目录（需纳入版本控制，用于迁移测试）
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(project(":core"))
 

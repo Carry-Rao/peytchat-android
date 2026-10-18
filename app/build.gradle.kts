@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -23,8 +24,16 @@ android {
         applicationId = "cn.yzjtiantian.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
+
+        val builtAbis = file("src/main/jniLibs")
+            .listFiles { f -> f.isDirectory && File(f, "libpeytchat_bridge.so").exists() }
+            ?.map { it.name }
+            .orEmpty()
+        if (builtAbis.isNotEmpty()) {
+            ndk { abiFilters += builtAbis }
+        }
     }
     signingConfigs {
         create("release") {
@@ -61,6 +70,25 @@ kotlin {
         jvmTarget.set(JvmTarget.JVM_17)
     }
 }
+
+// 构建前校验 native 桥接库已就位：缺失时直接报可操作的错误，
+// 而不是产出一个「能装、一启动就 NoClassDefFoundError」的包。
+val verifyNativeLibs = tasks.register("verifyNativeLibs") {
+    val jniDir = file("src/main/jniLibs")
+    doFirst {
+        val abis = jniDir.listFiles { f -> f.isDirectory && File(f, "libpeytchat_bridge.so").exists() }
+            ?.map { it.name }
+            .orEmpty()
+        if (abis.isEmpty()) {
+            throw GradleException(
+                "app/src/main/jniLibs/ 下没有 libpeytchat_bridge.so，构建出的 APK 会在启动时崩溃。\n" +
+                    "请先生成 native 库，例如：\n" +
+                    "  ./scripts/build-android.sh debug arm64-v8a,x86_64"
+            )
+        }
+    }
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(verifyNativeLibs) }
 
 dependencies {
     implementation(project(":core"))

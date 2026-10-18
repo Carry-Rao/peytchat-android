@@ -1,0 +1,78 @@
+name: Android Build
+
+# 目的：把「必须构建 Rust native 库」这件事固化到 CI，杜绝
+# 「只跑 gradlew assemble → 得到能装必崩的包」这类问题。
+#
+# 说明：
+#   - 构建前会先校验 patches/core/*.patch 能干净应用（上游 core 变更会导致失败）。
+#   - 需要 cargo-ndk 与 lib-patcher；若 lib-patcher 不在 crates.io，请改为从源码安装。
+
+on:
+  push:
+    branches: [ main, 'fix/**' ]
+  pull_request:
+
+jobs:
+  core-patch-check:
+    name: core 子模块补丁可干净应用
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: 校验 patches/core/*.patch
+        run: |
+          shopt -s nullglob
+          status=0
+          count=0
+          for p in patches/core/*.patch; do
+            count=$((count + 1))
+            if git -C core apply --reverse --check "$p" 2>/dev/null; then
+              echo "已应用: $p"
+            elif git -C core apply --check "$p"; then
+              echo "可应用: $p"
+            else
+              echo "::error::core 补丁无法干净应用: $p（上游 core 可能已变更，需要 rebase）"
+              status=1
+            fi
+          done
+          echo "共检查 $count 个补丁"
+          exit $status
+
+  build-apk:
+    name: 构建 native 库 + APK (arm64-v8a)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: 安装 NDK 与 platform-tools
+        run: sdkmanager --install "ndk;27.0.12077973" "platform-tools"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: 安装 cargo-ndk 与 lib-patcher
+        run: |
+          cargo install cargo-ndk
+          cargo install lib-patcher
+
+      - name: 构建（Rust + APK）
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/ndk/27.0.12077973"
+          ./scripts/build-android.sh debug arm64-v8a
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk

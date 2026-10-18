@@ -130,7 +130,8 @@ class EventBridge(
                 val patchUrl = event.payload.optString("patchUrl")
                 val version = event.payload.optString("version")
                 val module = event.payload.optString("module")
-                val md5 = event.payload.optString("md5")
+                // 推荐 sha256；兼容旧事件的 md5
+                val hash = event.payload.optString("sha256").ifEmpty { event.payload.optString("md5") }
 
                 android.util.Log.d("PEYT", "热更新可用: module=$module, version=$version")
 
@@ -139,7 +140,7 @@ class EventBridge(
                     url = patchUrl,
                     module = module,
                     version = version,
-                    md5 = md5
+                    hash = hash
                 )
             }
             "ModuleUpdate" -> {
