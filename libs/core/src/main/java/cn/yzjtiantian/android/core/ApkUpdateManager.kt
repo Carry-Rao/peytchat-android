@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 链路：
  *  1. [checkForApkUpdate] 拉取更新清单，解析顶层 `apk` 字段（可选，缺省表示无 APK 更新）；
  *  2. 清单 `apk.versionCode` 严格大于当前 [getCurrentVersionCode] 时提示更新；
- *  3. [downloadApk] 流式下载到 `filesDir/apks/`，边下边回调进度，完成后校验 MD5；
+ *  3. [downloadApk] 流式下载到 `filesDir/apks/`，边下边回调进度，完成后校验哈希（sha256/md5）；
  *  4. [installApk] 通过 FileProvider content URI 调系统安装器（用户确认后安装）。
  *
  * 清单 `apk` 字段格式：
@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     "versionCode": 2,
  *     "versionName": "0.2.0",
  *     "url": "https://peyt.org/peytchat-android-update/apk/peytchat-0.2.0.apk",
- *     "md5": "a1b2c3d4e5f6...",
+ *     "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
  *     "size": 12582912,
  *     "releaseNotes": "1. 修复邀请链接 bug\n2. ...",
  *     "forceUpdate": false,
@@ -62,7 +62,7 @@ class ApkUpdateManager(private val context: Context) {
         val versionCode: Int,
         val versionName: String,
         val url: String,
-        val md5: String,
+        val hash: String,            // sha256(64 位 hex) 或 md5(32 位 hex)
         val size: Long,              // 字节数，-1 表示清单未提供
         val releaseNotes: String,
         val forceUpdate: Boolean,
@@ -154,7 +154,9 @@ class ApkUpdateManager(private val context: Context) {
     }
 
     private fun fetchManifest(url: String): String {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = (HotUpdateManager.httpsOnly(url)
+            ?: throw IllegalArgumentException("清单地址必须为 https: $url"))
+            .openConnection() as HttpURLConnection
         conn.connectTimeout = 30_000
         conn.readTimeout = 30_000
         conn.requestMethod = "GET"
@@ -172,7 +174,7 @@ class ApkUpdateManager(private val context: Context) {
             versionCode = versionCode,
             versionName = versionName,
             url = url,
-            md5 = apk.optString("md5"),
+            hash = apk.optString("sha256").ifEmpty { apk.optString("md5") },
             size = apk.optLong("size", -1L),
             releaseNotes = apk.optString("releaseNotes"),
             forceUpdate = apk.optBoolean("forceUpdate", false),
@@ -188,16 +190,19 @@ class ApkUpdateManager(private val context: Context) {
     }
 
     /**
-     * 下载 APK 到 `filesDir/apks/peytchat-<versionName>.apk`，边下边回调进度，
-     * 完成后校验 MD5。成功时写入 [PREF_APK_JUST_UPDATED] 标志（供下次启动补装补丁）。
+     * 下载 APK 到 `filesDir/apks/peytchat-<versionCode>.apk`，边下边回调进度，
+     * 完成后校验哈希（sha256/md5）。成功时写入 [PREF_APK_JUST_UPDATED] 标志（供下次启动补装补丁）。
      * 回调（进度与结果）在工作线程执行，UI 层需自行切回主线程。
      */
     fun downloadApk(info: ApkInfo, onProgress: ProgressCallback?, callback: DownloadCallback) {
         cancelled.set(false)
         Thread {
-            val dest = File(apkDir, "peytchat-${info.versionName}.apk")
+            // 文件名不用远端 versionName（避免其含路径分隔符越出 apks/ 目录）
+            val dest = File(apkDir, "peytchat-${info.versionCode}.apk")
             try {
-                val conn = URL(info.url).openConnection() as HttpURLConnection
+                val conn = (HotUpdateManager.httpsOnly(info.url)
+                    ?: throw IllegalArgumentException("APK 地址必须为 https: ${info.url}"))
+                    .openConnection() as HttpURLConnection
                 conn.connectTimeout = 30_000
                 conn.readTimeout = 60_000
                 // 禁用 gzip，保证 Content-Length 是原始大小、进度条百分比准确
@@ -233,10 +238,10 @@ class ApkUpdateManager(private val context: Context) {
                 conn.disconnect()
                 onProgress?.onProgress(downloaded, if (total > 0) total else downloaded)
 
-                if (info.md5.isNotEmpty() && !verifyMd5(dest, info.md5)) {
-                    Log.e(TAG, "APK MD5 校验失败: ${dest.name}")
+                if (info.hash.isNotEmpty() && !verifyHash(dest, info.hash)) {
+                    Log.e(TAG, "APK 哈希校验失败: ${dest.name}")
                     dest.delete()
-                    callback.onResult(false, null, "MD5 校验失败，已丢弃下载文件")
+                    callback.onResult(false, null, "哈希校验失败，已丢弃下载文件")
                     return@Thread
                 }
 
@@ -254,13 +259,22 @@ class ApkUpdateManager(private val context: Context) {
         }.start()
     }
 
-    private fun verifyMd5(file: File, expectedMd5: String): Boolean {
+    /**
+     * 校验文件哈希。算法按 `expected` 长度自动判定：64 位 hex → SHA-256，32 位 → MD5。
+     * 注意：哈希只能防「内容损坏」，不能防「被同时替换」（无身份认证能力）。
+     */
+    private fun verifyHash(file: File, expected: String): Boolean {
         return try {
-            val digest = MessageDigest.getInstance("MD5").digest(file.readBytes())
+            val algo = when (expected.trim().length) {
+                64 -> "SHA-256"
+                32 -> "MD5"
+                else -> return false
+            }
+            val digest = MessageDigest.getInstance(algo).digest(file.readBytes())
             val actual = digest.joinToString("") { "%02x".format(it) }
-            actual.equals(expectedMd5, ignoreCase = true)
+            actual.equals(expected.trim(), ignoreCase = true)
         } catch (e: Exception) {
-            Log.e(TAG, "MD5 校验异常", e)
+            Log.e(TAG, "哈希校验异常", e)
             false
         }
     }

@@ -32,7 +32,9 @@ import cn.yzjtiantian.android.data.entity.WorkspaceEntity
         ActivityEntity::class,
     ],
     version = 1,
-    exportSchema = false,
+    // 导出 schema 基线（生成到 libs/data/schemas/），供后续版本做迁移校验；
+    // 改 schema 时必须同步 version 与 Migration，否则升级会抛 IllegalStateException。
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun workspaceDao(): WorkspaceDao

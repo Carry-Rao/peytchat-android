@@ -23,6 +23,26 @@ pub enum PluginError {
 
 pub type Result<T> = std::result::Result<T, PluginError>;
 
+/// 校验插件名：仅允许 ASCII 字母/数字与 `-` `_` `.`，且不得为 `.` / `..`。
+/// 防止 `base_dir.join(name)` 或拼 URL 时被 `..`/路径分隔符污染。
+fn is_safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// 校验 ZIP 条目相对路径：拒绝绝对路径、盘符、反斜杠与 `.` / `..` 段。
+fn is_safe_rel_path(rel: &str) -> bool {
+    !rel.is_empty()
+        && !rel.starts_with('/')
+        && !rel.contains(':')
+        && !rel.contains('\\')
+        && rel.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+}
+
 /// A plugin entry from the GitHub registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryPlugin {
@@ -95,6 +115,9 @@ impl PluginManager {
     /// Install a plugin by name from the registry.
     /// Plugin files live at plugins/<author>/<name>/<entry>.
     pub fn install_plugin(&self, name: &str) -> Result<RegistryPlugin> {
+        if !is_safe_name(name) {
+            return Err(PluginError::Plugin(format!("非法插件名: {name}")));
+        }
         let author = self.find_author(name)?;
         let manifest_url = format!("{}/{}/{}/plugin.json", self.raw_base, author, name);
         let resp = reqwest::blocking::get(&manifest_url)
@@ -105,6 +128,10 @@ impl PluginManager {
         let plugin: RegistryPlugin = resp
             .json()
             .map_err(|e| PluginError::Json(format!("解析插件 {name} 清单失败: {e}")))?;
+
+        if !is_safe_rel_path(&plugin.entry) {
+            return Err(PluginError::Plugin(format!("非法入口路径: {}", plugin.entry)));
+        }
 
         let dir = self.base_dir.join(name);
         fs::create_dir_all(&dir).map_err(|e| PluginError::Io(e.to_string()))?;
@@ -176,6 +203,10 @@ impl PluginManager {
         let plugin: RegistryPlugin = serde_json::from_str(&manifest_str)
             .map_err(|e| PluginError::Json(format!("解析 plugin.json 失败: {e}")))?;
 
+        if !is_safe_name(&plugin.name) {
+            return Err(PluginError::Plugin(format!("非法插件名: {}", plugin.name)));
+        }
+
         let dst = self.base_dir.join(&plugin.name);
         if dst.exists() {
             fs::remove_dir_all(&dst).map_err(|e| PluginError::Io(e.to_string()))?;
@@ -194,7 +225,14 @@ impl PluginManager {
             if rel_path.is_empty() {
                 continue;
             }
+            // 防路径穿越：拒绝 `..` / 绝对路径 / 盘符，并二次确认落点在 dst 之内
+            if !is_safe_rel_path(&rel_path) {
+                return Err(PluginError::Plugin(format!("ZIP 包含非法路径: {name}")));
+            }
             let target = dst.join(&rel_path);
+            if !target.starts_with(&dst) {
+                return Err(PluginError::Plugin(format!("ZIP 路径越界: {name}")));
+            }
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent).map_err(|e| PluginError::Io(e.to_string()))?;
             }
@@ -210,6 +248,9 @@ impl PluginManager {
 
     /// Remove a plugin directory.
     pub fn uninstall_plugin(&self, name: &str) -> Result<()> {
+        if !is_safe_name(name) {
+            return Err(PluginError::Plugin(format!("非法插件名: {name}")));
+        }
         let dir = self.base_dir.join(name);
         if !dir.exists() {
             return Err(PluginError::Plugin(format!("插件 {name} 未安装")));

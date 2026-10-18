@@ -230,13 +230,11 @@ fun AppRoot(
                 }
             }
 
-            // ✅ 传入 accountManager
             ShellScreen(
                 repository = repository,
-                accountManager = accountManager,  // ✅ 新增参数
+                accountManager = accountManager,
                 onLoggedOut = {
                     loggedIn = false
-                    // 退出登录：停止常驻消息服务，清掉全部通知
                     MessageNotificationService.stop(context)
                     MessageNotifications.cancelAll(context)
                 },

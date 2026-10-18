@@ -112,9 +112,10 @@ fun ChatScreen(
         scope.launch(Dispatchers.IO) {
             try {
                 repository.sendMessage(channel.chatId, text)
-                android.util.Log.d("PEYT", "[send] ok chatId=${channel.chatId} text=$text")
+                // 不打印消息正文（PII），仅记录会话与长度
+                android.util.Log.d("PEYT", "[send] ok chatId=${channel.chatId} len=${text.length}")
             } catch (e: Exception) {
-                android.util.Log.e("PEYT", "[send] FAILED chatId=${channel.chatId} text=$text", e)
+                android.util.Log.e("PEYT", "[send] FAILED chatId=${channel.chatId} len=${text.length}", e)
                 Handler(Looper.getMainLooper()).post {
                     android.widget.Toast.makeText(context, "发送失败: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
                 }

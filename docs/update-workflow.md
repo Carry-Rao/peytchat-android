@@ -54,7 +54,7 @@ OUT=updates/update.json ./scripts/gen-update-manifest.sh \
     updates/chat_1.0.2.dex
 ```
 
-脚本自动算 MD5、拼下载 URL。多个补丁可一次传入：`... update.json updates/shell_1.0.2.dex updates/login_1.0.2.dex`
+脚本自动算 SHA-256、拼下载 URL。多个补丁可一次传入：`... update.json updates/shell_1.0.2.dex updates/login_1.0.2.dex`
 
 ### 1.4 上传服务器
 
@@ -68,7 +68,7 @@ https://peyt.org/peytchat-android-update/chat_1.0.2.dex
 上传后验证：
 
 ```bash
-curl https://peyt.org/peytchat-android-update/update.json   # 应返回 JSON，且 md5 与文件一致
+curl https://peyt.org/peytchat-android-update/update.json   # 应返回 JSON，且 sha256 与文件一致
 ```
 
 ### 1.5 客户端生效（两步）
@@ -184,8 +184,8 @@ OUT=updates/update.json ./scripts/gen-update-manifest.sh \
 ## 4. 常用命令速查
 
 ```bash
-# 计算 dex 的 md5（应与清单一致）
-md5sum updates/chat_1.0.2.dex
+# 计算 dex 的 sha256（应与清单一致）
+sha256sum updates/chat_1.0.2.dex
 
 # 本地联调（手机与电脑同一网络）
 cd updates && python3 -m http.server 8000
@@ -195,13 +195,14 @@ cd updates && python3 -m http.server 8000
 # 验证服务器文件可访问
 curl -I https://peyt.org/peytchat-android-update/shell_1.0.1.dex
 
-# 回滚：把清单里的版本改回旧版本号（如 1.0.1），用户再次检查更新即会下载旧补丁
+# 回滚：客户端对补丁做「单调递增」校验，改回旧版本号**不会**生效；
+# 需要回滚请发布一个版本号更大的「修正版」补丁
 ```
 
 ## 5. 常见问题
 
-- **检查更新提示「失败 1 个」**：多半是 md5 不匹配或 dex 损坏，`md5sum` 核对后重新生成清单。
+- **检查更新提示「失败 1 个」**：多半是 sha256 不匹配或 dex 损坏，`sha256sum` 核对后重新生成清单。
 - **下载了但重启后没有「已加载补丁」**：确认 dex 里入口类名是
   `cn.yzjtiantian.android.patch.<Module>Patch`（大小写敏感），且文件名/清单 module 一致。
 - **补丁不生效（老功能还在）**：补丁类与基座类重名了。补丁只能新增类，不能覆盖基座类。
-- **用户版本混乱**：补丁版本号必须单调递增；回滚请改清单版本而非覆盖旧 dex。
+- **用户版本混乱**：补丁版本号必须单调递增；客户端会拒绝相等/更低的版本，回滚请发布版本号更大的修正版。

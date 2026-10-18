@@ -162,19 +162,37 @@ fun ShellScreen(
         }
     }
 
+    /** 外部来源字符串仅接受「邀请链接」形态，避免任意串被外部 App/网页触发加好友。 */
+    fun isInviteLink(raw: String): Boolean {
+        val s = raw.trim()
+        if (s.isEmpty() || s.length > 512) return false
+        // deltachat 邀请链接：http(s) URL 且带 `#` 片段
+        if ((s.startsWith("http://") || s.startsWith("https://")) && s.contains('#')) return true
+        // 指纹直连邀请
+        return s.startsWith("OPENPGP4FPR:", ignoreCase = true)
+    }
+
     /** 处理深链(`peytchat://` 等)：`peytchat://chat/<id>` 直接打开会话，其余建单聊/securejoin 后跳转。 */
     fun openDeepLink(raw: String) {
+        val link = raw.trim()
         val chatPrefix = "peytchat://chat/"
-        if (raw.startsWith(chatPrefix)) {
-            val id = raw.substring(chatPrefix.length).toLongOrNull()
+        if (link.startsWith(chatPrefix, ignoreCase = true)) {
+            val id = link.substring(chatPrefix.length).toLongOrNull()
             if (id != null) {
                 openChatById(id)
                 return
             }
+            error = "无效的会话链接"
+            return
+        }
+        // 深链入口对外导出且 BROWSABLE：非会话链接必须是合法邀请，其余一律拒绝
+        if (!isInviteLink(link)) {
+            error = "不支持的链接"
+            return
         }
         scope.launch {
             val chatId = withContext(Dispatchers.IO) {
-                runCatching { repository.addFriend(raw) }
+                runCatching { repository.addFriend(link) }
                     .onFailure { error = it.message }
                     .getOrNull()
             }

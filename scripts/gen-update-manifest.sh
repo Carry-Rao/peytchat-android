@@ -27,7 +27,7 @@
 #   例如: shell_1.0.1.dex  →  { "module": "shell", "version": "1.0.1", ... }
 #
 # APK 说明:
-#   --apk 指定 APK 文件后，会自动计算 MD5 和字节数写入顶层 `apk` 字段；
+#   --apk 指定 APK 文件后，会自动计算 SHA-256 和字节数写入顶层 `apk` 字段；
 #   没有 --apk 时不输出 `apk` 字段（向后兼容，客户端视为无 APK 更新）。
 #   versionCode 必须比线上已发布版本严格 +1，否则客户端不会提示更新。
 #
@@ -88,7 +88,7 @@ if [ -n "$APK_PATH" ]; then
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
-    echo "错误: 需要 python3 计算 md5 并生成 JSON" >&2
+    echo "错误: 需要 python3 计算 sha256 并生成 JSON" >&2
     exit 1
 fi
 
@@ -112,21 +112,21 @@ for f in files:
         print(f"错误: 文件名必须是 <module>_<version>.dex，得到: {name}", file=sys.stderr)
         sys.exit(1)
     module, version = stem.rsplit("_", 1)
-    md5 = hashlib.md5(open(f, "rb").read()).hexdigest()
+    sha256 = hashlib.sha256(open(f, "rb").read()).hexdigest()
     url = base_url.rstrip("/") + "/" + name
-    patches.append({"module": module, "version": version, "url": url, "md5": md5})
+    patches.append({"module": module, "version": version, "url": url, "sha256": sha256})
 
-manifest = {"appVersion": "0.1.0", "patches": patches}
+manifest = {"appVersion": apk_vname or "0.0.0", "patches": patches}
 
 if apk_path:
     apk_url = base_url.rstrip("/") + "/" + os.path.basename(apk_path)
-    apk_md5 = hashlib.md5(open(apk_path, "rb").read()).hexdigest()
+    apk_sha256 = hashlib.sha256(open(apk_path, "rb").read()).hexdigest()
     apk_size = os.path.getsize(apk_path)
     apk = {
         "versionCode": int(apk_vcode),
         "versionName": apk_vname,
         "url": apk_url,
-        "md5": apk_md5,
+        "sha256": apk_sha256,
         "size": apk_size,
     }
     if apk_notes_file:
@@ -147,10 +147,10 @@ if apk_path:
     a = manifest["apk"]
     print(f"  apk  : v{a['versionName']} (versionCode={a['versionCode']})")
     print(f"    url : {a['url']}")
-    print(f"    md5 : {a['md5']}")
+    print(f"    sha256: {a['sha256']}")
     print(f"    size: {a['size']} bytes")
 for p in patches:
     print(f"  {p['module']} v{p['version']}")
     print(f"    url : {p['url']}")
-    print(f"    md5 : {p['md5']}")
+    print(f"    sha256: {p['sha256']}")
 PY
