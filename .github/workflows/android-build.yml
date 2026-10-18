@@ -55,7 +55,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: 安装 NDK 与 platform-tools
         run: sdkmanager --install "ndk;27.0.12077973" "platform-tools"
