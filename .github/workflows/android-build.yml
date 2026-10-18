@@ -24,13 +24,15 @@ jobs:
       - name: 校验 patches/core/*.patch
         run: |
           shopt -s nullglob
+          root="$(pwd)"
           status=0
           count=0
+          # 注意：git -C core 会切换工作目录，故补丁必须传绝对路径
           for p in patches/core/*.patch; do
             count=$((count + 1))
-            if git -C core apply --reverse --check "$p" 2>/dev/null; then
+            if git -C core apply --reverse --check "$root/$p" 2>/dev/null; then
               echo "已应用: $p"
-            elif git -C core apply --check "$p"; then
+            elif git -C core apply --check "$root/$p"; then
               echo "可应用: $p"
             else
               echo "::error::core 补丁无法干净应用: $p（上游 core 可能已变更，需要 rebase）"
