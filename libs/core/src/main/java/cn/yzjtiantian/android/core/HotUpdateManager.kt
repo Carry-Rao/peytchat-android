@@ -54,7 +54,7 @@ class HotUpdateManager(private val context: Context) {
         private const val PATCH_DIR = "patches"
 
         /** 默认更新清单地址（线上服务端，设置页里也可修改并持久化）。 */
-        const val DEFAULT_MANIFEST_URL = "https://peyt.org/peytchat-android-update/update.json"
+        const val DEFAULT_MANIFEST_URL = "https://raw.githubusercontent.com/PleaseEnterYourText-Studio/peytchat-android-update/main/update.json"
 
         // 模块名称常量
         const val MODULE_SHELL = "shell"

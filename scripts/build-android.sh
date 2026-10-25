@@ -76,6 +76,31 @@ else
     info "构建模式: DEBUG"
 fi
 
+# ---------- NDK host 预编译目录探测 ----------
+# 返回 NDK 提供的 host 目录名：linux-x86_64 或 darwin-x86_64
+# 依据实际目录存在性判断，而非 uname，避免 CI/容器环境误判
+detect_ndk_host() {
+    local ndk_root="$1"
+    local prebuilt="$ndk_root/toolchains/llvm/prebuilt"
+    local host
+    for host in linux-x86_64 darwin-x86_64; do
+        if [[ -d "$prebuilt/$host" ]]; then
+            echo "$host"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# 校验给定 NDK 路径是否可用：要求 host 目录存在且 llvm-objcopy 可执行
+is_valid_ndk() {
+    local ndk_root="$1"
+    [[ -d "$ndk_root" ]] || return 1
+    local host
+    host=$(detect_ndk_host "$ndk_root") || return 1
+    [[ -x "$ndk_root/toolchains/llvm/prebuilt/$host/bin/llvm-objcopy" ]]
+}
+
 # ---------- NDK 路径探测 ----------
 detect_ndk() {
     # 1) 已有环境变量
@@ -99,12 +124,12 @@ detect_ndk() {
             # 取版本号最大的一个
             local latest
             latest=$(ls -1d "$base"/*/ 2>/dev/null | sort -V | tail -n1)
-            if [[ -n "$latest" && -x "${latest}toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" ]]; then
+            if [[ -n "$latest" && -n "$(detect_ndk_host "${latest%/}" 2>/dev/null)" ]]; then
                 echo "${latest%/}"
                 return 0
             fi
             # 有些路径本身就是 NDK 根
-            if [[ -x "$base/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" ]]; then
+            if [[ -n "$(detect_ndk_host "$base" 2>/dev/null)" ]]; then
                 echo "$base"
                 return 0
             fi
@@ -116,18 +141,23 @@ detect_ndk() {
 
 if NDK_PATH=$(detect_ndk); then
     export ANDROID_NDK_HOME="$NDK_PATH"
-    info "NDK: $ANDROID_NDK_HOME"
+    NDK_HOST="$(detect_ndk_host "$ANDROID_NDK_HOME")"
+    export NDK_HOST
+    info "NDK: $ANDROID_NDK_HOME (host: $NDK_HOST)"
 else
     warn "未自动找到 Android NDK"
     read -r -p "请输入 Android NDK 路径 (例如 ~/Android/Sdk/ndk/30.0.16248370): " NDK_INPUT
     # 展开 ~
     NDK_INPUT="${NDK_INPUT/#\~/$HOME}"
-    if [[ -d "$NDK_INPUT" && -x "$NDK_INPUT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" ]]; then
+    if is_valid_ndk "$NDK_INPUT"; then
         export ANDROID_NDK_HOME="$NDK_INPUT"
-        info "使用 NDK: $ANDROID_NDK_HOME"
+        NDK_HOST="$(detect_ndk_host "$ANDROID_NDK_HOME")"
+        export NDK_HOST
+        info "使用 NDK: $ANDROID_NDK_HOME (host: $NDK_HOST)"
     else
         error "无效的 NDK 路径: $NDK_INPUT"
-        error "需要包含 toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy"
+        error "需要存在 toolchains/llvm/prebuilt/linux-x86_64 或 darwin-x86_64，"
+        error "且其中包含可执行的 bin/llvm-objcopy"
         exit 1
     fi
 fi
@@ -289,7 +319,17 @@ done
 info "步骤 3/3: 打包 APK..."
 cd "$PROJECT_ROOT"
 
-if ./gradlew assemble${PROFILE^}; then
+# 兼容 macOS 自带 Bash 3.2：避免使用 ${var^}
+case "$PROFILE" in
+    release) GRADLE_TASK="assembleRelease" ;;
+    debug)   GRADLE_TASK="assembleDebug" ;;
+    *)
+        error "未知构建类型: $PROFILE（可选: debug | release）"
+        exit 1
+        ;;
+esac
+
+if ./gradlew "$GRADLE_TASK"; then
     success "APK 构建成功"
 else
     error "APK 构建失败"
@@ -340,7 +380,7 @@ echo "=========================================="
 echo "构建信息:"
 echo "  - 模式: $PROFILE"
 echo "  - 架构: ${ABIS[*]}"
-echo "  - NDK: $ANDROID_NDK_HOME"
+echo "  - NDK: $ANDROID_NDK_HOME (host: $NDK_HOST)"
 for abi in "${ABIS[@]}"; do
     echo "  - .so 文件: $PROJECT_ROOT/app/src/main/jniLibs/$abi/libpeytchat_bridge.so"
 done
