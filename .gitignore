@@ -33,4 +33,5 @@ a.out
 patch-sample/
 updates/
 keystore.properties
+app/peytchat-release.jks
 *.jks
