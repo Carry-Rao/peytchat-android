@@ -27,7 +27,7 @@ import java.security.MessageDigest
  *     {
  *       "module": "shell",
  *       "version": "1.0.1",
- *       "url": "https://peyt.org/peytchat-android-update/shell_1.0.1.dex",
+ *       "url": "https://raw.githubusercontent.com/PleaseEnterYourText-Studio/peytchat-android-update/main/shell_1.0.1.dex",
  *       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
  *     }
  *   ]
