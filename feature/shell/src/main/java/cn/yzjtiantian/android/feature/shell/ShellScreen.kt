@@ -75,8 +75,6 @@ import cn.yzjtiantian.android.ui.theme.AppThemeMode.*
 
 private enum class Tab(val label: String) {
     Messages("消息"),
-    Work("协作"),
-    Inbox("通知"),
     Settings("设置"),
 }
 
@@ -433,18 +431,6 @@ fun ShellScreen(
                                 onOpenDm = { openChannel = it },
                                 onOpenChannel = { openChannel = it },
                             )
-                            Tab.Work -> ChannelList(
-                                channels = channels.filter { it.spaceType == "card" },
-                                onSelect = { openChannel = it },
-                            )
-                            Tab.Inbox -> InboxScreen(
-                                repository = repository,
-                                onOpenChannel = { chatId ->
-                                    val ch = channels.firstOrNull { it.chatId == chatId }
-                                    if (ch != null) openChannel = ch
-                                    else error = "频道未找到"
-                                },
-                            )
                             Tab.Settings -> SettingsPage(
                                 onLoggedOut = onLoggedOut,
                                 onNavigateToAccount = { showAccountPage = true }
@@ -512,8 +498,6 @@ private fun BottomNavBar(
     NavigationBar {
         listOf(
             Tab.Messages to TdesignIcons.MessageCircle,
-            Tab.Work to TdesignIcons.LayoutGrid,
-            Tab.Inbox to TdesignIcons.Inbox,
             Tab.Settings to TdesignIcons.Settings,
         ).forEach { (tab, icon) ->
             NavigationBarItem(
@@ -717,37 +701,6 @@ private fun DividerRow() {
 }
 
 /** Channel list: iMessage-style rows with avatar, name, preview and time. */
-@Composable
-private fun ChannelList(
-    channels: List<ChannelDto>,
-    onSelect: (ChannelDto) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    if (channels.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "暂无频道",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        return
-    }
-    LazyColumn(modifier = modifier.fillMaxSize()) {
-        itemsIndexed(channels) { index, ch ->
-            ChannelRow(ch = ch, onClick = { onSelect(ch) })
-            if (index < channels.lastIndex) {
-                DividerRow()
-            }
-        }
-    }
-}
-
 @Composable
 private fun ChannelRow(
     ch: ChannelDto,
