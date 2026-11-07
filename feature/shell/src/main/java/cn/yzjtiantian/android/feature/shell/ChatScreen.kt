@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -95,6 +97,8 @@ fun ChatScreen(
 ) {
     var messages by remember { mutableStateOf<List<ChatMessageDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    /** null = 正在检查连接；false = 连接未就绪（不能发送）。 */
+    var connectionReady by remember { mutableStateOf<Boolean?>(null) }
     var draft by remember { mutableStateOf("") }
     var fullscreenImage by remember { mutableStateOf<ChatMessageDto?>(null) }
     // 输入纯数字时, 在输入框上方询问是否作为漫画发送。
@@ -112,7 +116,21 @@ fun ChatScreen(
         loading = false
     }
 
+    suspend fun refreshConnection() {
+        connectionReady = withContext(Dispatchers.IO) {
+            runCatching { repository.getConnectivity() >= 3000 }.getOrDefault(false)
+        }
+    }
+
+    /** 连接未就绪时拦截发送并提示。 */
+    fun ensureConnected(): Boolean {
+        if (connectionReady == true) return true
+        android.widget.Toast.makeText(context, "连接未就绪，请稍后再试", android.widget.Toast.LENGTH_SHORT).show()
+        return false
+    }
+
     fun sendText(text: String) {
+        if (!ensureConnected()) return
         scope.launch(Dispatchers.IO) {
             try {
                 repository.sendMessage(channel.chatId, text)
@@ -150,11 +168,13 @@ fun ChatScreen(
 
     LaunchedEffect(channel.chatId) {
         load()
+        refreshConnection()
         listState.scrollToItem(0)
         // Poll for new messages (simple refresh loop).
         while (true) {
             delay(3000)
             load()
+            refreshConnection()
         }
     }
 
@@ -173,12 +193,8 @@ fun ChatScreen(
                 modifier = Modifier.fillMaxSize(),
                 reverseLayout = true,
             ) {
-                items(messages.asReversed(), key = { it.msgId }) { msg ->
-                    if (msg.isInfo) {
-                        InfoLine(text = msg.text)
-                    } else {
-                        MessageBubble(msg = msg, onOpenImage = { fullscreenImage = it })
-                    }
+                items(messages.asReversed().filterNot { it.isInfo }, key = { it.msgId }) { msg ->
+                    MessageBubble(msg = msg, onOpenImage = { fullscreenImage = it })
                 }
             }
             if (loading && messages.isEmpty()) {
@@ -231,16 +247,23 @@ fun ChatScreen(
                     maxLines = 4,
                 )
                 Spacer(Modifier.width(8.dp))
-                IconButton(onClick = { filePicker.launch("*/*") }) {
+                IconButton(
+                    onClick = {
+                        if (!ensureConnected()) return@IconButton
+                        filePicker.launch("*/*")
+                    },
+                ) {
                     Icon(
                         Icons.Filled.AttachFile,
                         contentDescription = "发送文件",
-                        tint = iMessageBlue,
+                        tint = if (connectionReady == true) iMessageBlue
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 Spacer(Modifier.width(8.dp))
                 IconButton(
                     onClick = {
+                        if (!ensureConnected()) return@IconButton
                         val text = draft.trim()
                         if (text.isEmpty()) return@IconButton
                         if (PURE_NUMBER.matches(text)) {
@@ -252,11 +275,20 @@ fun ChatScreen(
                         }
                     },
                 ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "发送",
-                        tint = iMessageBlue,
-                    )
+                    if (connectionReady == null) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = iMessageBlue,
+                        )
+                    } else {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "发送",
+                            tint = if (connectionReady == true) iMessageBlue
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -473,18 +505,6 @@ private fun FileCardRow(msg: ChatMessageDto) {
             )
         }
     }
-}
-
-@Composable
-private fun InfoLine(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 6.dp),
-    )
 }
 
 private fun formatAttachmentBytes(bytes: Long): String {

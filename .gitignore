@@ -20,6 +20,9 @@ captures/
 # OS
 .DS_Store
 
+# Kotlin compiler session artifacts
+.kotlin/
+
 # Rust
 rust/target/
 

@@ -106,6 +106,14 @@ class PeytRepository(
     }
 
     /**
+     * core 连接等级（`get_connectivity`）：1000 未连接、2000 连接中、
+     * 3000 收发中、4000 已连接。发送前用它判断连接是否就绪。
+     */
+    fun getConnectivity(): Int = runCatching {
+        (rpc.callRaw("get_connectivity", JSONArray().put(accountId())) as? Number)?.toInt() ?: 0
+    }.getOrDefault(0)
+
+    /**
      * 发送附件/文档(对齐桌面端 `send_attachment` + media 信封):
      * - 二进制写入临时文件, 按 MIME 推断 viewtype(Image/Gif/Audio/Video/File);
      * - 正文写 `{"type":"media",...,"payload":{"media_type","mime","name","size","text"}}`;
