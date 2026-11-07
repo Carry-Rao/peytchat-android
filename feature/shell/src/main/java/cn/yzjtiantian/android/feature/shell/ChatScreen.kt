@@ -15,6 +15,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -93,6 +94,7 @@ fun ChatScreen(
     channel: ChannelDto,
 ) {
     var messages by remember { mutableStateOf<List<ChatMessageDto>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
     var draft by remember { mutableStateOf("") }
     var fullscreenImage by remember { mutableStateOf<ChatMessageDto?>(null) }
     // 输入纯数字时, 在输入框上方询问是否作为漫画发送。
@@ -103,9 +105,11 @@ fun ChatScreen(
     val context = LocalContext.current
 
     suspend fun load() {
-        withContext(Dispatchers.IO) {
-            messages = repository.getChatMessages(channel.chatId)
+        val loaded = withContext(Dispatchers.IO) {
+            repository.getChatMessages(channel.chatId)
         }
+        messages = loaded
+        loading = false
     }
 
     fun sendText(text: String) {
@@ -159,19 +163,31 @@ fun ChatScreen(
             .fillMaxSize()
             .imePadding(),
     ) {
-        LazyColumn(
-            state = listState,
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            reverseLayout = true,
         ) {
-            items(messages.asReversed(), key = { it.msgId }) { msg ->
-                if (msg.isInfo) {
-                    InfoLine(text = msg.text)
-                } else {
-                    MessageBubble(msg = msg, onOpenImage = { fullscreenImage = it })
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                reverseLayout = true,
+            ) {
+                items(messages.asReversed(), key = { it.msgId }) { msg ->
+                    if (msg.isInfo) {
+                        InfoLine(text = msg.text)
+                    } else {
+                        MessageBubble(msg = msg, onOpenImage = { fullscreenImage = it })
+                    }
                 }
+            }
+            if (loading && messages.isEmpty()) {
+                Text(
+                    text = "加载中……",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.Center),
+                )
             }
         }
         // 纯数字 → 发送前在输入框上方询问是否作为漫画。

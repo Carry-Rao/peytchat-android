@@ -108,21 +108,13 @@ fun ShellScreen(
     var dmChats by remember { mutableStateOf<List<ChannelDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var currentTab by remember { mutableStateOf(Tab.Messages) }
+    var initialLoading by remember { mutableStateOf(true) }
     var openChannel by remember { mutableStateOf<ChannelDto?>(null) }
     var openDirectChat by remember { mutableStateOf<DirectChat?>(null) }
     var expandMenu by remember { mutableStateOf(false) }
     var addAction by remember { mutableStateOf<AddAction?>(null) }
     var showAccountPage by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-
-    fun refreshChannels(ws: WorkspaceDto) {
-        currentWorkspace = ws
-        scope.launch(Dispatchers.IO) {
-            runCatching { repository.listChannels(ws.id) }
-                .onSuccess { channels = it }
-                .onFailure { error = it.message }
-        }
-    }
 
     /** 刷新 workspace 频道 + 直接消息(轮询用,不重置 currentWorkspace)。 */
     fun refreshMessages() {
@@ -233,9 +225,18 @@ fun ShellScreen(
                 repository.ensurePeytStudio()
                 val ws = repository.listWorkspaces()
                 workspaces = ws
-                ws.firstOrNull()?.let { refreshChannels(it) }
+                ws.firstOrNull()?.let { first ->
+                    currentWorkspace = first
+                    runCatching { repository.listChannels(first.id) }
+                        .onSuccess { channels = it }
+                        .onFailure { error = it.message }
+                }
+                runCatching { repository.listDirectChats() }
+                    .onSuccess { dmChats = it }
+                    .onFailure { error = it.message }
             }.onFailure { error = it.message }
         }
+        initialLoading = false
         // 轮询刷新:收到新消息(陌生人单聊/请求)时直接消息区能及时出现。
         while (true) {
             delay(3000)
@@ -428,6 +429,7 @@ fun ShellScreen(
                             Tab.Messages -> MessagesList(
                                 dmChats = dmChats,
                                 channels = channels.filter { it.spaceType != "card" },
+                                loading = initialLoading,
                                 onOpenDm = { openChannel = it },
                                 onOpenChannel = { openChannel = it },
                             )
@@ -642,9 +644,25 @@ private fun ChannelScreen(
 private fun MessagesList(
     dmChats: List<ChannelDto>,
     channels: List<ChannelDto>,
+    loading: Boolean,
     onOpenDm: (ChannelDto) -> Unit,
     onOpenChannel: (ChannelDto) -> Unit,
 ) {
+    if (loading) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "加载中……",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
     if (dmChats.isEmpty() && channels.isEmpty()) {
         Box(
             modifier = Modifier
