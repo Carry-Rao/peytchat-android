@@ -587,9 +587,8 @@ private fun ChannelScreen(
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(modifier = Modifier.weight(1f))
                 // 删除好友/群组
                 IconButton(onClick = { showDeleteConfirm = true }) {
                     Icon(
