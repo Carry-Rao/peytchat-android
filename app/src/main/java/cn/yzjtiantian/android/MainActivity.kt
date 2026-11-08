@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -22,6 +23,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,7 +33,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavController
@@ -47,6 +51,7 @@ import cn.yzjtiantian.android.data.AppDatabase
 import cn.yzjtiantian.android.data.repository.PeytRepository
 import cn.yzjtiantian.android.ui.login.LoginScreen
 import cn.yzjtiantian.android.ui.shell.ShellScreen
+import cn.yzjtiantian.android.ui.theme.AppThemeMode
 import kotlinx.coroutines.withContext
 import cn.yzjtiantian.android.ui.theme.DynamicPeytchatTheme
 import cn.yzjtiantian.android.ui.theme.ThemeManager
@@ -65,6 +70,18 @@ class MainActivity : ComponentActivity() {
         deepLink = intent.dataString
         setContent {
             val themeMode by ThemeManager.themeMode.collectAsState()
+            val isDark = when (themeMode) {
+                AppThemeMode.DARK -> true
+                AppThemeMode.LIGHT -> false
+                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            // 状态栏/导航栏图标明暗跟随 App 主题（而非系统主题），否则深色主题下时间和图标会看不见。
+            val view = LocalView.current
+            SideEffect {
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = !isDark
+                controller.isAppearanceLightNavigationBars = !isDark
+            }
             val navController = rememberNavController()
 
             DynamicPeytchatTheme(
