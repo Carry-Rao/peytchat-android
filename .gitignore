@@ -20,6 +20,9 @@ captures/
 # OS
 .DS_Store
 
+# Kotlin compiler session artifacts
+.kotlin/
+
 # Rust
 rust/target/
 
@@ -31,6 +34,7 @@ rv
 a.out
 
 patch-sample/
+patch/
 updates/
 keystore.properties
 app/peytchat-release.jks
